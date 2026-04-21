@@ -1,0 +1,222 @@
+{
+  "translation": {
+    "app": {
+      "name": "RAGraph",
+      "tagline": "Autonomes lokales Wissen"
+    },
+    "nav": {
+      "universes": "Universen",
+      "globalChat": "Globaler Chat",
+      "settings": "Einstellungen",
+      "commandPalette": "Befehlspalette",
+      "primary": "Hauptnavigation"
+    },
+    "universe": {
+      "new": "Neues Universum",
+      "create": "Universum erstellen",
+      "name": "Name",
+      "description": "Beschreibung",
+      "color": "Farbe",
+      "empty": "Noch keine Universen",
+      "emptyHint": "Erstelle ein Universum für ein Thema, Projekt oder eine Domäne.",
+      "stats": {
+        "documents": "Dokumente",
+        "entities": "Entitäten",
+        "topics": "Themen",
+        "chunks": "Chunks",
+        "lastSync": "Letzte Synchronisation"
+      },
+      "tabs": {
+        "chat": "Chat",
+        "graph": "Graph",
+        "documents": "Dokumente",
+        "memory": "Memory",
+        "settings": "Einstellungen"
+      },
+      "deleteConfirm": "Universum wirklich löschen? Alle Daten gehen verloren."
+    },
+    "settings": {
+      "title": "Einstellungen",
+      "language": "Sprache",
+      "provider": {
+        "title": "KI-Provider",
+        "description": "Konfiguriere einen OpenAI-kompatiblen Endpoint.",
+        "baseUrl": "Base-URL",
+        "baseUrlHint": "Endet üblicherweise mit /v1",
+        "apiKey": "API-Schlüssel",
+        "apiKeyHint": "Wird verschlüsselt in deinem Betriebssystem-Keychain gespeichert.",
+        "test": "Verbindung testen",
+        "fetch": "Modelle laden",
+        "chatModel": "Chat-Modell",
+        "visionModel": "Vision-Modell (optional)",
+        "embedding": {
+          "mode": "Embeddings",
+          "local": "Lokal (auf dem Gerät)",
+          "remote": "Remote",
+          "remoteBaseUrl": "Embedding-Base-URL",
+          "remoteApiKey": "Embedding-API-Schlüssel",
+          "remoteModel": "Embedding-Modell",
+          "hint": "Lokal nutzt ein mehrsprachiges Modell auf deinem Gerät. Remote ruft einen OpenAI-kompatiblen /v1/embeddings Endpoint."
+        },
+        "connected": "Verbunden",
+        "notConnected": "Nicht verbunden"
+      },
+      "ingestion": {
+        "title": "Ingestion",
+        "concurrency": "Parallelität",
+        "autoIngest": "Automatische Indizierung",
+        "autoIngestHint": "Überwacht eingebundene Ordner und indiziert Änderungen automatisch."
+      },
+      "agent": {
+        "title": "Agent",
+        "description": "Steuert, wie autonom der Agent pro Anfrage Tools verwendet.",
+        "maxSteps": "Max. Tool-Schritte",
+        "maxStepsHint": "Obergrenze für Tool-Aufrufe pro Nutzernachricht.",
+        "toolTimeout": "Tool-Timeout (ms)",
+        "toolTimeoutHint": "0 deaktiviert. Tools über der Grenze liefern einen strukturierten Timeout-Fehler.",
+        "maxSources": "Max. zitierte Quellen",
+        "maxSourcesHint": "Schwächste Quellen werden zuerst aus der Liste entfernt, wenn das Limit erreicht ist.",
+        "loopDetection": "Schleifenerkennung",
+        "loopDetectionHint": "Bricht ab, wenn dasselbe Tool mit identischen Argumenten wiederholt aufgerufen wird."
+      },
+      "graph": {
+        "title": "Wissensgraph",
+        "description": "Hybride Suche und Selbstorganisation feinabstimmen.",
+        "hybrid": "Hybride Suche (BM25 + Vektor)",
+        "hybridHint": "Fügt Volltext- und semantische Treffer via Reciprocal Rank Fusion zusammen.",
+        "expansion": "Graph-Expansion",
+        "expansionHint": "Hebt Top-Treffer anhand der Graph-Nachbarschaft an.",
+        "expansionDepth": "Expansionstiefe",
+        "expansionWeight": "Expansionsgewicht",
+        "entityMerge": "Entity-Merge-Schwelle",
+        "entityMergeHint": "Ab dieser Kosinus-Ähnlichkeit werden Entitäten des gleichen Typs zusammengeführt.",
+        "topicMerge": "Topic-Merge-Schwelle",
+        "referenceMatch": "Referenz-Schwelle",
+        "referenceMatchHint": "Mindestähnlichkeit, damit eine REFERENCES_DOC-Kante zwischen Dokumenten entsteht.",
+        "consolidate": "Jetzt konsolidieren",
+        "consolidateHint": "Alias-Merging, Topic-Clustering und Zentralität neu berechnen."
+      },
+      "save": "Speichern",
+      "saved": "Gespeichert"
+    },
+    "chat": {
+      "newChat": "Neuer Chat",
+      "placeholder": "Frag etwas, füge Dateien hinzu oder Text ein…",
+      "send": "Senden",
+      "stop": "Stopp",
+      "attach": "Anhängen",
+      "sources": "Quellen",
+      "reasoning": "Gedanken",
+      "toolCalls": "Werkzeugaufrufe",
+      "regenerate": "Neu generieren",
+      "branch": "Von hier verzweigen",
+      "empty": "Starte die Unterhaltung — der Agent sucht, argumentiert und zitiert Quellen.",
+      "globalTitle": "Globaler Chat",
+      "globalHint": "Durchsucht alle Universen."
+    },
+    "documents": {
+      "title": "Dokumente",
+      "mounts": "Eingebundene Ordner",
+      "addMount": "Ordner hinzufügen",
+      "emptyMounts": "Keine Ordner eingebunden. Füge einen Ordner hinzu, um die Indizierung zu starten.",
+      "status": {
+        "pending": "Wartend",
+        "processing": "In Bearbeitung",
+        "indexed": "Indiziert",
+        "failed": "Fehlgeschlagen",
+        "stale": "Veraltet",
+        "deleted": "Gelöscht"
+      },
+      "reingest": "Neu indizieren",
+      "remove": "Entfernen",
+      "open": "Öffnen",
+      "reveal": "Im Ordner anzeigen",
+      "rescan": "Neu scannen",
+      "filters": {
+        "all": "Alle",
+        "search": "Dateien suchen…"
+      },
+      "empty": "Noch keine Dokumente. Binde einen Ordner ein, um zu starten.",
+      "ingest": {
+        "phase": {
+          "parse": "Datei lesen",
+          "chunk": "Chunking",
+          "analyze": "Analysiere",
+          "embed": "Embeddings",
+          "graph": "Graph speichern",
+          "done": "Fertig",
+          "error": "Fehler"
+        },
+        "pages_one": "{{count}} Seite",
+        "pages_other": "{{count}} Seiten",
+        "chunks_one": "{{count}} Chunk",
+        "chunks_other": "{{count}} Chunks",
+        "analyzeSlice": "Zusammenfassung {{step}}/{{total}}",
+        "analyzeStructure": "Struktur extrahieren",
+        "embedStep": "Chunk {{step}}/{{total}}",
+        "graph": "Graph schreiben"
+      }
+    },
+    "graph": {
+      "title": "Wissensgraph",
+      "overview": "Übersicht",
+      "filters": "Filter",
+      "search": "Knoten suchen…",
+      "types": {
+        "Document": "Dokumente",
+        "Entity": "Entitäten",
+        "Topic": "Themen",
+        "Domain": "Domänen",
+        "Keyword": "Stichwörter",
+        "Chunk": "Chunks",
+        "AgentNote": "Agent-Notizen"
+      },
+      "focus": "Fokussieren",
+      "expand": "Nachbarschaft erweitern",
+      "empty": "Der Graph ist leer. Indiziere zuerst Dokumente."
+    },
+    "memory": {
+      "title": "Agent-Memory",
+      "subtitle": "Notizen, die der Agent eigenständig gespeichert hat.",
+      "kind": "Art",
+      "content": "Inhalt",
+      "reason": "Begründung",
+      "strength": "Gewicht",
+      "kinds": {
+        "note": "Notiz",
+        "insight": "Erkenntnis",
+        "preference": "Präferenz",
+        "fact": "Fakt"
+      },
+      "empty": "Noch keine Einträge. Der Agent speichert hier nützliche Erkenntnisse."
+    },
+    "onboarding": {
+      "welcome": "Willkommen bei RAGraph",
+      "subtitle": "Lokales, autonomes Wissensmanagement mit deinem eigenen KI-Provider.",
+      "start": "Loslegen",
+      "step1": "Provider verbinden",
+      "step2": "Modelle auswählen",
+      "step3": "Sprache wählen",
+      "finish": "Fertig",
+      "providerIntro": "Jede OpenAI-kompatible API funktioniert — lokal via LM Studio, Ollama, OpenRouter, Azure usw."
+    },
+    "common": {
+      "cancel": "Abbrechen",
+      "delete": "Löschen",
+      "save": "Speichern",
+      "edit": "Bearbeiten",
+      "confirm": "Bestätigen",
+      "yes": "Ja",
+      "no": "Nein",
+      "close": "Schliessen",
+      "loading": "Lädt…",
+      "error": "Fehler",
+      "retry": "Erneut versuchen",
+      "never": "nie",
+      "open": "Öffnen"
+    },
+    "errors": {
+      "providerNotConfigured": "Der KI-Provider ist nicht konfiguriert. Bitte in den Einstellungen einrichten."
+    }
+  }
+}

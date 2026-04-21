@@ -1,0 +1,43 @@
+appId: ai.ragraph.app
+productName: RAGraph
+directories:
+  buildResources: build
+  output: release/${version}
+files:
+  - "!**/.vscode/*"
+  - "!src/*"
+  - "!electron.vite.config.{js,ts,mjs,cjs}"
+  - "!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}"
+  - "!{.env,.env.*,.npmrc,pnpm-lock.yaml}"
+  - "!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}"
+  - "!tests/**"
+asarUnpack:
+  - "**/node_modules/better-sqlite3/**"
+  - "**/node_modules/@lancedb/**"
+  - "**/node_modules/sharp/**"
+  - "**/node_modules/@huggingface/**"
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: ${productName}-${version}-Setup.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  category: public.app-category.productivity
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Office
+publish:
+  provider: github
+  owner: ADVASYS
+  repo: ragraph
+  releaseType: release

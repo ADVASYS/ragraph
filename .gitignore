@@ -1,0 +1,187 @@
+# ---------------------------------------------------------------------------
+# Dependencies
+# ---------------------------------------------------------------------------
+node_modules/
+jspm_packages/
+.pnpm-store/
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+
+# ---------------------------------------------------------------------------
+# Build output (electron-vite / Vite / tsc)
+# ---------------------------------------------------------------------------
+out/
+dist/
+dist-electron/
+dist-ssr/
+build/
+release/
+packages/*/dist/
+*.tsbuildinfo
+
+# ---------------------------------------------------------------------------
+# Electron-builder artifacts
+# ---------------------------------------------------------------------------
+release-builds/
+app-builds/
+*.exe
+*.dmg
+*.snap
+*.deb
+*.rpm
+*.AppImage
+*.msi
+*.pkg
+*.blockmap
+!electron-builder.yml
+
+# ---------------------------------------------------------------------------
+# Environment & secrets
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+.secrets/
+
+# ---------------------------------------------------------------------------
+# Native modules (better-sqlite3, sharp, transformers cache, etc.)
+# ---------------------------------------------------------------------------
+*.node
+prebuilds/
+build/Release/
+build/Debug/
+.cache/
+.parcel-cache/
+.turbo/
+.vite/
+.swc/
+
+# Hugging Face / transformers.js model cache
+.huggingface/
+models-cache/
+.models-cache/
+
+# ---------------------------------------------------------------------------
+# Local user data (LanceDB, SQLite, logs, workspace)
+# ---------------------------------------------------------------------------
+# LanceDB vector stores
+*.lance/
+lancedb/
+data/lancedb/
+
+# SQLite databases (better-sqlite3)
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Application runtime data
+userData/
+app-data/
+local-data/
+workspace-data/
+
+# ---------------------------------------------------------------------------
+# Logs
+# ---------------------------------------------------------------------------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+electron-log/
+
+# ---------------------------------------------------------------------------
+# Testing
+# ---------------------------------------------------------------------------
+coverage/
+.nyc_output/
+*.lcov
+
+# Playwright
+playwright-report/
+playwright/.cache/
+test-results/
+blob-report/
+e2e-results/
+
+# Vitest
+.vitest-cache/
+
+# ---------------------------------------------------------------------------
+# TypeScript / ESLint / Prettier caches
+# ---------------------------------------------------------------------------
+.eslintcache
+.stylelintcache
+.prettiercache
+
+# ---------------------------------------------------------------------------
+# IDE / Editor
+# ---------------------------------------------------------------------------
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
+.history/
+.ionide/
+.idea/
+*.iml
+*.ipr
+*.iws
+.fleet/
+*.sublime-workspace
+*.sublime-project
+
+# Cursor / AI tooling
+.cursor/cache/
+.cursorignore.local
+
+# ---------------------------------------------------------------------------
+# OS generated files
+# ---------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# ---------------------------------------------------------------------------
+# Temporary files
+# ---------------------------------------------------------------------------
+tmp/
+temp/
+.tmp/
+.temp/
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+
+# ---------------------------------------------------------------------------
+# Lock files from other package managers (we use npm)
+# ---------------------------------------------------------------------------
+yarn.lock
+pnpm-lock.yaml
+bun.lockb

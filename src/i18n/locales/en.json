@@ -1,0 +1,222 @@
+{
+  "translation": {
+    "app": {
+      "name": "RAGraph",
+      "tagline": "Autonomous local knowledge"
+    },
+    "nav": {
+      "universes": "Universes",
+      "globalChat": "Global chat",
+      "settings": "Settings",
+      "commandPalette": "Command palette",
+      "primary": "Primary navigation"
+    },
+    "universe": {
+      "new": "New universe",
+      "create": "Create universe",
+      "name": "Name",
+      "description": "Description",
+      "color": "Color",
+      "empty": "No universes yet",
+      "emptyHint": "Create a universe to organize a topic, project or domain.",
+      "stats": {
+        "documents": "Documents",
+        "entities": "Entities",
+        "topics": "Topics",
+        "chunks": "Chunks",
+        "lastSync": "Last sync"
+      },
+      "tabs": {
+        "chat": "Chat",
+        "graph": "Graph",
+        "documents": "Documents",
+        "memory": "Memory",
+        "settings": "Settings"
+      },
+      "deleteConfirm": "Delete this universe? All its data will be removed."
+    },
+    "settings": {
+      "title": "Settings",
+      "language": "Language",
+      "provider": {
+        "title": "AI Provider",
+        "description": "Configure any OpenAI-compatible endpoint.",
+        "baseUrl": "Base URL",
+        "baseUrlHint": "Usually ends with /v1",
+        "apiKey": "API key",
+        "apiKeyHint": "Stored encrypted via your OS keychain.",
+        "test": "Test connection",
+        "fetch": "Fetch models",
+        "chatModel": "Chat model",
+        "visionModel": "Vision model (optional)",
+        "embedding": {
+          "mode": "Embeddings",
+          "local": "Local (on-device)",
+          "remote": "Remote",
+          "remoteBaseUrl": "Embedding base URL",
+          "remoteApiKey": "Embedding API key",
+          "remoteModel": "Embedding model",
+          "hint": "Local uses a multilingual model on your device. Remote calls an OpenAI-compatible /v1/embeddings endpoint."
+        },
+        "connected": "Connected",
+        "notConnected": "Not connected"
+      },
+      "ingestion": {
+        "title": "Ingestion",
+        "concurrency": "Concurrency",
+        "autoIngest": "Automatic indexing",
+        "autoIngestHint": "Watch mounted folders and index changes automatically."
+      },
+      "agent": {
+        "title": "Agent",
+        "description": "Control how autonomously the agent runs tools per turn.",
+        "maxSteps": "Max reasoning steps",
+        "maxStepsHint": "Upper bound on tool-call rounds per user message.",
+        "toolTimeout": "Per-tool timeout (ms)",
+        "toolTimeoutHint": "Set to 0 to disable. Tools that exceed this return a structured timeout error.",
+        "maxSources": "Max cited sources",
+        "maxSourcesHint": "Weakest sources are pruned first when the cap is exceeded.",
+        "loopDetection": "Loop detection",
+        "loopDetectionHint": "Abort the turn if the same tool is called with identical arguments repeatedly."
+      },
+      "graph": {
+        "title": "Knowledge graph",
+        "description": "Tune hybrid retrieval and self-organization thresholds.",
+        "hybrid": "Hybrid (BM25 + vector)",
+        "hybridHint": "Fuse full-text and semantic search via reciprocal rank.",
+        "expansion": "Graph expansion",
+        "expansionHint": "Boost top hits by walking the neighborhood of each seed.",
+        "expansionDepth": "Expansion depth",
+        "expansionWeight": "Expansion weight",
+        "entityMerge": "Entity merge threshold",
+        "entityMergeHint": "Cosine similarity above which entities of the same type are merged.",
+        "topicMerge": "Topic merge threshold",
+        "referenceMatch": "Reference match threshold",
+        "referenceMatchHint": "Cosine confidence required to add a REFERENCES_DOC edge between documents.",
+        "consolidate": "Consolidate now",
+        "consolidateHint": "Run alias merging, topic clustering and centrality recompute."
+      },
+      "save": "Save",
+      "saved": "Saved"
+    },
+    "chat": {
+      "newChat": "New chat",
+      "placeholder": "Ask anything, drop files or paste text…",
+      "send": "Send",
+      "stop": "Stop",
+      "attach": "Attach",
+      "sources": "Sources",
+      "reasoning": "Reasoning",
+      "toolCalls": "Tool calls",
+      "regenerate": "Regenerate",
+      "branch": "Branch from here",
+      "empty": "Start the conversation — the agent will search, reason, and cite sources.",
+      "globalTitle": "Global chat",
+      "globalHint": "Searches across all universes."
+    },
+    "documents": {
+      "title": "Documents",
+      "mounts": "Folder mounts",
+      "addMount": "Add folder",
+      "emptyMounts": "No folders mounted. Add a folder to start indexing.",
+      "status": {
+        "pending": "Pending",
+        "processing": "Processing",
+        "indexed": "Indexed",
+        "failed": "Failed",
+        "stale": "Stale",
+        "deleted": "Deleted"
+      },
+      "reingest": "Re-ingest",
+      "remove": "Remove",
+      "open": "Open",
+      "reveal": "Reveal in folder",
+      "rescan": "Rescan",
+      "filters": {
+        "all": "All",
+        "search": "Search files…"
+      },
+      "empty": "No documents yet. Mount a folder to get started.",
+      "ingest": {
+        "phase": {
+          "parse": "Reading file",
+          "chunk": "Chunking",
+          "analyze": "Analyzing",
+          "embed": "Embedding",
+          "graph": "Writing graph",
+          "done": "Done",
+          "error": "Error"
+        },
+        "pages_one": "{{count}} page",
+        "pages_other": "{{count}} pages",
+        "chunks_one": "{{count}} chunk",
+        "chunks_other": "{{count}} chunks",
+        "analyzeSlice": "summary {{step}}/{{total}}",
+        "analyzeStructure": "extracting structure",
+        "embedStep": "chunk {{step}}/{{total}}",
+        "graph": "persisting graph"
+      }
+    },
+    "graph": {
+      "title": "Knowledge graph",
+      "overview": "Overview",
+      "filters": "Filters",
+      "search": "Search nodes…",
+      "types": {
+        "Document": "Documents",
+        "Entity": "Entities",
+        "Topic": "Topics",
+        "Domain": "Domains",
+        "Keyword": "Keywords",
+        "Chunk": "Chunks",
+        "AgentNote": "Agent notes"
+      },
+      "focus": "Focus",
+      "expand": "Expand neighborhood",
+      "empty": "The graph is empty. Index some documents first."
+    },
+    "memory": {
+      "title": "Agent memory",
+      "subtitle": "Notes the agent saved autonomously.",
+      "kind": "Kind",
+      "content": "Content",
+      "reason": "Reason",
+      "strength": "Strength",
+      "kinds": {
+        "note": "Note",
+        "insight": "Insight",
+        "preference": "Preference",
+        "fact": "Fact"
+      },
+      "empty": "No memories yet. The agent will save useful insights here."
+    },
+    "onboarding": {
+      "welcome": "Welcome to RAGraph",
+      "subtitle": "Local, autonomous knowledge powered by your own AI provider.",
+      "start": "Get started",
+      "step1": "Connect a provider",
+      "step2": "Pick your models",
+      "step3": "Choose a language",
+      "finish": "Finish",
+      "providerIntro": "Any OpenAI-compatible API works — local LM Studio, Ollama, OpenRouter, Azure, etc."
+    },
+    "common": {
+      "cancel": "Cancel",
+      "delete": "Delete",
+      "save": "Save",
+      "edit": "Edit",
+      "confirm": "Confirm",
+      "yes": "Yes",
+      "no": "No",
+      "close": "Close",
+      "loading": "Loading…",
+      "error": "Error",
+      "retry": "Retry",
+      "never": "never",
+      "open": "Open"
+    },
+    "errors": {
+      "providerNotConfigured": "AI provider is not configured. Please set it up in Settings."
+    }
+  }
+}

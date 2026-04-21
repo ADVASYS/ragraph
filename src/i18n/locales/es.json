@@ -1,0 +1,176 @@
+{
+  "translation": {
+    "app": { "name": "RAGraph", "tagline": "Conocimiento local autónomo" },
+    "nav": { "universes": "Universos", "globalChat": "Chat global", "settings": "Ajustes", "commandPalette": "Paleta de comandos", "primary": "Navegación principal" },
+    "universe": {
+      "new": "Nuevo universo",
+      "create": "Crear universo",
+      "name": "Nombre",
+      "description": "Descripción",
+      "color": "Color",
+      "empty": "Aún no hay universos",
+      "emptyHint": "Crea un universo para organizar un tema, proyecto o dominio.",
+      "stats": { "documents": "Documentos", "entities": "Entidades", "topics": "Temas", "chunks": "Fragmentos", "lastSync": "Última sync" },
+      "tabs": { "chat": "Chat", "graph": "Grafo", "documents": "Documentos", "memory": "Memoria", "settings": "Ajustes" },
+      "deleteConfirm": "¿Eliminar este universo? Todos sus datos se perderán."
+    },
+    "settings": {
+      "title": "Ajustes",
+      "language": "Idioma",
+      "provider": {
+        "title": "Proveedor IA",
+        "description": "Configura un endpoint compatible con OpenAI.",
+        "baseUrl": "URL base",
+        "baseUrlHint": "Suele terminar en /v1",
+        "apiKey": "Clave API",
+        "apiKeyHint": "Se guarda cifrada en el llavero del sistema.",
+        "test": "Probar conexión",
+        "fetch": "Cargar modelos",
+        "chatModel": "Modelo de chat",
+        "visionModel": "Modelo de visión (opcional)",
+        "embedding": {
+          "mode": "Embeddings",
+          "local": "Local (en el dispositivo)",
+          "remote": "Remoto",
+          "remoteBaseUrl": "URL base de embeddings",
+          "remoteApiKey": "Clave API de embeddings",
+          "remoteModel": "Modelo de embeddings",
+          "hint": "Local usa un modelo multilingüe en tu dispositivo. Remoto llama a un endpoint /v1/embeddings compatible con OpenAI."
+        },
+        "connected": "Conectado",
+        "notConnected": "No conectado"
+      },
+      "ingestion": {
+        "title": "Ingesta",
+        "concurrency": "Concurrencia",
+        "autoIngest": "Indexación automática",
+        "autoIngestHint": "Observa las carpetas montadas e indexa cambios automáticamente."
+      },
+      "agent": {
+        "title": "Agente",
+        "description": "Controla la autonomía del agente por turno.",
+        "maxSteps": "Pasos máximos",
+        "maxStepsHint": "Límite superior de llamadas a herramientas por mensaje.",
+        "toolTimeout": "Tiempo por herramienta (ms)",
+        "toolTimeoutHint": "0 para desactivar. Las herramientas lentas devuelven un error estructurado.",
+        "maxSources": "Fuentes citadas máximas",
+        "maxSourcesHint": "Las fuentes débiles se descartan primero.",
+        "loopDetection": "Detección de bucles",
+        "loopDetectionHint": "Aborta si la misma herramienta se llama repetidamente con los mismos argumentos."
+      },
+      "graph": {
+        "title": "Grafo de conocimiento",
+        "description": "Ajusta la recuperación híbrida y la auto-organización.",
+        "hybrid": "Híbrido (BM25 + vector)",
+        "hybridHint": "Fusiona búsqueda semántica y textual vía RRF.",
+        "expansion": "Expansión de grafo",
+        "expansionHint": "Refuerza los mejores aciertos vía vecindario.",
+        "expansionDepth": "Profundidad",
+        "expansionWeight": "Peso",
+        "entityMerge": "Umbral fusión entidades",
+        "entityMergeHint": "Similitud coseno mínima para fusionar entidades del mismo tipo.",
+        "topicMerge": "Umbral fusión temas",
+        "referenceMatch": "Umbral de referencia",
+        "referenceMatchHint": "Similitud mínima para crear una arista REFERENCES_DOC.",
+        "consolidate": "Consolidar ahora",
+        "consolidateHint": "Fusión de alias, agrupación de temas y centralidad."
+      },
+      "save": "Guardar",
+      "saved": "Guardado"
+    },
+    "chat": {
+      "newChat": "Nuevo chat",
+      "placeholder": "Pregunta cualquier cosa, adjunta archivos…",
+      "send": "Enviar",
+      "stop": "Detener",
+      "attach": "Adjuntar",
+      "sources": "Fuentes",
+      "reasoning": "Razonamiento",
+      "toolCalls": "Llamadas a herramientas",
+      "regenerate": "Regenerar",
+      "branch": "Bifurcar desde aquí",
+      "empty": "Inicia la conversación — el agente busca, razona y cita fuentes.",
+      "globalTitle": "Chat global",
+      "globalHint": "Busca en todos los universos."
+    },
+    "documents": {
+      "title": "Documentos",
+      "mounts": "Carpetas montadas",
+      "addMount": "Agregar carpeta",
+      "emptyMounts": "No hay carpetas montadas.",
+      "status": { "pending": "Pendiente", "processing": "Procesando", "indexed": "Indexado", "failed": "Fallido", "stale": "Obsoleto", "deleted": "Eliminado" },
+      "reingest": "Re-indexar",
+      "remove": "Eliminar",
+      "open": "Abrir",
+      "reveal": "Mostrar en carpeta",
+      "rescan": "Re-escanear",
+      "filters": { "all": "Todos", "search": "Buscar archivos…" },
+      "empty": "Aún no hay documentos. Monta una carpeta para empezar.",
+      "ingest": {
+        "phase": {
+          "parse": "Leyendo archivo",
+          "chunk": "Dividiendo",
+          "analyze": "Analizando",
+          "embed": "Embeddings",
+          "graph": "Escribiendo grafo",
+          "done": "Listo",
+          "error": "Error"
+        },
+        "pages_one": "{{count}} página",
+        "pages_other": "{{count}} páginas",
+        "chunks_one": "{{count}} fragmento",
+        "chunks_other": "{{count}} fragmentos",
+        "analyzeSlice": "resumen {{step}}/{{total}}",
+        "analyzeStructure": "extrayendo estructura",
+        "embedStep": "fragmento {{step}}/{{total}}",
+        "graph": "persistiendo grafo"
+      }
+    },
+    "graph": {
+      "title": "Grafo de conocimiento",
+      "overview": "Vista general",
+      "filters": "Filtros",
+      "search": "Buscar nodos…",
+      "types": { "Document": "Documentos", "Entity": "Entidades", "Topic": "Temas", "Domain": "Dominios", "Keyword": "Palabras clave", "Chunk": "Fragmentos", "AgentNote": "Notas del agente" },
+      "focus": "Enfocar",
+      "expand": "Expandir vecindario",
+      "empty": "El grafo está vacío. Indexa documentos primero."
+    },
+    "memory": {
+      "title": "Memoria del agente",
+      "subtitle": "Notas que el agente guardó de forma autónoma.",
+      "kind": "Tipo",
+      "content": "Contenido",
+      "reason": "Razón",
+      "strength": "Fuerza",
+      "kinds": { "note": "Nota", "insight": "Observación", "preference": "Preferencia", "fact": "Hecho" },
+      "empty": "Sin entradas todavía."
+    },
+    "onboarding": {
+      "welcome": "Bienvenido a RAGraph",
+      "subtitle": "Conocimiento local autónomo con tu propio proveedor IA.",
+      "start": "Empezar",
+      "step1": "Conectar proveedor",
+      "step2": "Elegir modelos",
+      "step3": "Elegir idioma",
+      "finish": "Finalizar",
+      "providerIntro": "Cualquier API compatible con OpenAI funciona — LM Studio, Ollama, OpenRouter, Azure, etc."
+    },
+    "common": {
+      "cancel": "Cancelar",
+      "delete": "Eliminar",
+      "save": "Guardar",
+      "edit": "Editar",
+      "confirm": "Confirmar",
+      "yes": "Sí",
+      "no": "No",
+      "close": "Cerrar",
+      "loading": "Cargando…",
+      "error": "Error",
+      "retry": "Reintentar",
+      "never": "nunca",
+      "open": "Abrir"
+    },
+    "errors": { "providerNotConfigured": "El proveedor IA no está configurado. Configúralo en Ajustes." }
+  }
+}
