@@ -51,15 +51,58 @@ export interface GateOutput {
 
 const DEFAULT_MAX_KEEP = 6;
 /**
- * Hard budget for the sub-LLM gate call. Kept well below the outer tool
+ * Hard budget for ONE sub-LLM gate attempt. Kept well below the outer tool
  * timeout (default 30s) so that slow gates never cause the surrounding heavy
  * tool (vectorSearch / entitySearch / ...) to hit its own timeout — otherwise
  * the main model sees `tool_timeout`, retries the same call, and eventually
- * trips the loop guard. The structured and prose passes each get this budget.
+ * trips the loop guard. Each fallback strategy (structured / line-list /
+ * loose JSON) gets its own budget of this size.
  */
 const DEFAULT_TIMEOUT_MS = 6_000;
 /** If there are this many (or fewer) candidates we skip the sub-LLM entirely. */
 const TRIVIAL_ITEMS_THRESHOLD = 2;
+
+/**
+ * Adaptive circuit breaker: many OpenAI-compatible providers (local models,
+ * smaller fine-tunes, non-JSON-mode gateways) cannot honour `generateObject`
+ * reliably. Once we have seen `STRUCTURED_FAILURE_COOLDOWN` failures we stop
+ * issuing structured calls for `STRUCTURED_DISABLE_MS`, jumping straight to
+ * the prose fallbacks. A single success clears the counter.
+ *
+ * The breaker is module-scoped (one per main-process lifetime) because the
+ * provider does not change inside a session. It is a best-effort optimisation
+ * only — the gate remains correct even if every call misses the breaker.
+ */
+const STRUCTURED_FAILURE_COOLDOWN = 2;
+const STRUCTURED_DISABLE_MS = 30 * 60 * 1000;
+let structuredFailureCount = 0;
+let structuredDisabledUntil = 0;
+function structuredAllowed(): boolean {
+  return Date.now() >= structuredDisabledUntil;
+}
+function recordStructuredFailure(): void {
+  structuredFailureCount += 1;
+  if (structuredFailureCount >= STRUCTURED_FAILURE_COOLDOWN) {
+    structuredDisabledUntil = Date.now() + STRUCTURED_DISABLE_MS;
+    log.warn("relevance_gate.structured_disabled", {
+      failures: structuredFailureCount,
+      reenableInMs: STRUCTURED_DISABLE_MS,
+    });
+  }
+}
+function recordStructuredSuccess(): void {
+  if (structuredFailureCount > 0 || structuredDisabledUntil > 0) {
+    log.info("relevance_gate.structured_reenabled", { after: structuredFailureCount });
+  }
+  structuredFailureCount = 0;
+  structuredDisabledUntil = 0;
+}
+
+/** Test helper — resets the module-scoped structured-output breaker. */
+export function __resetRelevanceGateBreakerForTests(): void {
+  structuredFailureCount = 0;
+  structuredDisabledUntil = 0;
+}
 
 const verdictSchema = z.object({
   kept: z
@@ -133,40 +176,79 @@ export async function evaluateRelevance(input: GateInput): Promise<GateOutput> {
   const timeoutMs = Math.max(1000, input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const validIds = new Set(input.items.map((it) => it.sourceId));
 
+  let structuredErrMsg: string | null = null;
+  let lineListErrMsg: string | null = null;
+  let looseJsonErrMsg: string | null = null;
+
+  // ---- Attempt 1: structured generateObject (skipped when the breaker is open).
+  if (structuredAllowed()) {
+    try {
+      const parsed = await withTimeout(
+        timeoutMs,
+        input.signal,
+        async (signal) => runStructured(input.llm.chatModel, system, prompt, signal),
+      );
+      recordStructuredSuccess();
+      return shapeVerdict(parsed, input.items, validIds, maxKeep);
+    } catch (err) {
+      const msg = (err as Error).message;
+      structuredErrMsg = msg;
+      if (msg === "aborted" || msg === "gate_timeout") {
+        log.warn("relevance_gate.skipped", { tool: input.toolName, items: input.items.length, reason: msg });
+        return fallbackKeepAll(input.items, maxKeep);
+      }
+      // Real structured failure (schema mismatch, provider can't do JSON mode, ...).
+      recordStructuredFailure();
+    }
+  }
+
+  // ---- Attempt 2: line-list prose. This is the format small / local models
+  // can actually produce reliably: one line per candidate, `#N rel: reason`.
   try {
-    const parsed = await withTimeout(
+    const text = await withTimeout(
       timeoutMs,
       input.signal,
-      async (signal) => runStructured(input.llm.chatModel, system, prompt, signal),
+      async (signal) => runLineList(input.llm.chatModel, system, prompt, numbered.length, signal),
     );
+    const parsed = parseLineList(text, numbered);
+    if (!parsed || parsed.kept.length === 0) throw new Error("gate_line_list_empty");
     return shapeVerdict(parsed, input.items, validIds, maxKeep);
-  } catch (structuredErr) {
-    const msg = (structuredErr as Error).message;
-    // Only attempt the prose fallback if the provider or the schema rejected
-    // the structured call — not if the caller aborted or we hit our timeout.
+  } catch (err) {
+    const msg = (err as Error).message;
+    lineListErrMsg = msg;
     if (msg === "aborted" || msg === "gate_timeout") {
       log.warn("relevance_gate.skipped", { tool: input.toolName, items: input.items.length, reason: msg });
       return fallbackKeepAll(input.items, maxKeep);
     }
-    try {
-      const text = await withTimeout(
-        timeoutMs,
-        input.signal,
-        async (signal) => runProse(input.llm.chatModel, system, prompt, signal),
-      );
-      const loose = parseJsonLoose(text);
-      if (!loose) throw new Error("gate_response_not_json");
-      return shapeVerdict(verdictSchema.parse(coerceVerdictShape(loose)), input.items, validIds, maxKeep);
-    } catch (textErr) {
-      log.warn("relevance_gate.fallback", {
-        tool: input.toolName,
-        items: input.items.length,
-        structured: msg,
-        prose: (textErr as Error).message,
-      });
+  }
+
+  // ---- Attempt 3: loose JSON prose. Covers the rare provider that refuses
+  // the numbered-list format but does emit a usable JSON blob in a text turn.
+  try {
+    const text = await withTimeout(
+      timeoutMs,
+      input.signal,
+      async (signal) => runProse(input.llm.chatModel, system, prompt, signal),
+    );
+    const loose = parseJsonLoose(text);
+    if (!loose) throw new Error("gate_response_not_json");
+    return shapeVerdict(verdictSchema.parse(coerceVerdictShape(loose)), input.items, validIds, maxKeep);
+  } catch (err) {
+    looseJsonErrMsg = (err as Error).message;
+    if (looseJsonErrMsg === "aborted" || looseJsonErrMsg === "gate_timeout") {
+      log.warn("relevance_gate.skipped", { tool: input.toolName, items: input.items.length, reason: looseJsonErrMsg });
       return fallbackKeepAll(input.items, maxKeep);
     }
   }
+
+  log.warn("relevance_gate.fallback", {
+    tool: input.toolName,
+    items: input.items.length,
+    structured: structuredErrMsg ?? "skipped (breaker open)",
+    lineList: lineListErrMsg,
+    prose: looseJsonErrMsg,
+  });
+  return fallbackKeepAll(input.items, maxKeep);
 }
 
 async function runStructured(
@@ -202,6 +284,92 @@ async function runProse(
     abortSignal: signal,
   });
   return res.text;
+}
+
+/**
+ * Ask the model for a line-based rating instead of JSON. Much more robust on
+ * small / local / non-JSON-mode providers than either `generateObject` or
+ * prose JSON, because the model only has to emit one short line per
+ * candidate. Example expected output:
+ *
+ *     #1 high: directly states the founding relation
+ *     #2 medium: adds useful context about the same person
+ *     #3 drop
+ *     #4 low: only a tangential mention
+ */
+async function runLineList(
+  model: LanguageModel,
+  system: string,
+  prompt: string,
+  itemCount: number,
+  signal: AbortSignal,
+): Promise<string> {
+  const instructions = [
+    "Rate each candidate's relevance to the goal.",
+    "Return EXACTLY one line per candidate (" + itemCount + " lines total) in this format:",
+    "#<n> <high|medium|low|drop>: <short reason (max 15 words)>",
+    "- Use `drop` when the candidate is useless for the goal (you may omit the reason after `drop`).",
+    "- Do NOT output any other text, headers, JSON, or markdown fences.",
+    "- Lines must start with `#` and the candidate number.",
+    "Example:",
+    "#1 high: directly states the founding relation",
+    "#2 medium: adds useful biographical context",
+    "#3 drop",
+  ].join("\n");
+  const res = await generateText({
+    model,
+    system: system + "\n\n" + instructions,
+    prompt: prompt + "\n\nRating list:",
+    temperature: 0,
+    maxTokens: Math.min(800, 40 + itemCount * 40),
+    abortSignal: signal,
+  });
+  return res.text;
+}
+
+const LINE_LIST_RE = /^\s*#?\s*(\d+)[\s.)\-:]+([A-Za-z]+)(?:\s*[:\-]\s*(.*))?$/;
+
+/**
+ * Parse a line-list rating back into a `verdictSchema`-shaped object. The
+ * parser is intentionally lenient: it accepts `#1`, `1.`, `1)`, mixed casing,
+ * and dashes / colons between the rating and the reason.
+ */
+function parseLineList(
+  text: string,
+  numbered: { n: number; sourceId: string }[],
+): z.infer<typeof verdictSchema> | null {
+  if (!text) return null;
+  const byNumber = new Map(numbered.map((n) => [n.n, n.sourceId]));
+  const kept: z.infer<typeof verdictSchema>["kept"] = [];
+  const droppedIds: string[] = [];
+  const seen = new Set<string>();
+  const lines = text.split(/\r?\n/);
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    const m = line.match(LINE_LIST_RE);
+    if (!m) continue;
+    const n = Number(m[1]);
+    const rel = m[2].toLowerCase();
+    const why = (m[3] ?? "").trim();
+    const sourceId = byNumber.get(n);
+    if (!sourceId || seen.has(sourceId)) continue;
+    seen.add(sourceId);
+    if (rel === "drop" || rel === "skip" || rel === "no") {
+      droppedIds.push(sourceId);
+      continue;
+    }
+    const relevance: "high" | "medium" | "low" | null =
+      rel === "high" ? "high" : rel === "medium" || rel === "mid" ? "medium" : rel === "low" ? "low" : null;
+    if (!relevance) continue;
+    kept.push({
+      sourceId,
+      relevance,
+      why: why.slice(0, 240) || `Rated ${relevance} by line-list gate.`,
+    });
+  }
+  if (!kept.length && !droppedIds.length) return null;
+  return { kept, droppedIds };
 }
 
 function shapeVerdict(
