@@ -25,7 +25,7 @@ vi.mock("ai", async (importOriginal) => {
   };
 });
 
-import { evaluateRelevance } from "../../electron/main/core/rag/RelevanceGate";
+import { evaluateRelevance, __resetRelevanceGateBreakerForTests } from "../../electron/main/core/rag/RelevanceGate";
 import type { LLMProviderHandle } from "../../electron/main/core/providers/LLMProvider";
 
 const llm = {
@@ -44,6 +44,9 @@ beforeEach(() => {
   state.objectError = null;
   state.textResponse = "";
   state.textError = null;
+  // The breaker is module-scoped; reset it so a prior test that induced a
+  // structured failure does not disable the structured path for the next one.
+  __resetRelevanceGateBreakerForTests();
 });
 
 describe("RelevanceGate.evaluateRelevance", () => {
@@ -99,9 +102,38 @@ describe("RelevanceGate.evaluateRelevance", () => {
     expect(out.droppedIds).toEqual(["chunk:c"]);
   });
 
-  it("falls back to generateText (prose JSON) when generateObject throws", async () => {
+  it("falls back to the line-list prose format when generateObject throws", async () => {
     state.objectError = new Error("provider rejected schema");
-    state.textResponse = "```json\n" + JSON.stringify({ kept: [{ sourceId: "s1", relevance: "HIGH", why: "yep" }], droppedIds: [] }) + "\n```";
+    // Small / local models reliably emit this line format; it is the primary
+    // fallback before we even attempt loose JSON parsing.
+    state.textResponse = [
+      "#1 high: directly answers the goal",
+      "#2 medium: adds supporting context",
+      "#3 drop",
+    ].join("\n");
+    const out = await evaluateRelevance({
+      llm,
+      goal: "g",
+      toolName: "t",
+      items: [
+        { sourceId: "s1", title: "", text: "aa" },
+        { sourceId: "s2", title: "", text: "bb" },
+        { sourceId: "s3", title: "", text: "cc" },
+      ],
+    });
+    expect(out.kept).toEqual([
+      { sourceId: "s1", relevance: "high", why: "directly answers the goal" },
+      { sourceId: "s2", relevance: "medium", why: "adds supporting context" },
+    ]);
+    expect(out.droppedIds).toEqual(["s3"]);
+  });
+
+  it("accepts loose JSON as a final fallback when the line-list format is not produced", async () => {
+    state.objectError = new Error("provider rejected schema");
+    // Text does not match the line-list pattern, so the line-list parser
+    // returns null and we fall through to the loose-JSON parser.
+    state.textResponse =
+      "```json\n" + JSON.stringify({ kept: [{ sourceId: "s1", relevance: "HIGH", why: "yep" }], droppedIds: [] }) + "\n```";
     const out = await evaluateRelevance({
       llm,
       goal: "g",
