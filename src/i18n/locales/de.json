@@ -130,6 +130,7 @@
       "reingest": "Neu indizieren",
       "remove": "Entfernen",
       "open": "Öffnen",
+      "openUrl": "URL öffnen",
       "reveal": "Im Ordner anzeigen",
       "rescan": "Neu scannen",
       "filters": {
@@ -155,6 +156,59 @@
         "analyzeStructure": "Struktur extrahieren",
         "embedStep": "Chunk {{step}}/{{total}}",
         "graph": "Graph schreiben"
+      },
+      "webSources": {
+        "title": "Web-Quellen",
+        "addSource": "Web-Quelle hinzufügen",
+        "addDescription": "URL crawlen und die Seiten automatisch in dieses Universum indizieren.",
+        "create": "Quelle anlegen",
+        "createdToast": "Web-Quelle für Crawl eingereiht",
+        "empty": "Noch keine Web-Quellen. Füge eine URL hinzu.",
+        "deleteConfirm": "Diese Web-Quelle samt aller indizierten Seiten löschen?",
+        "rescan": "Jetzt neu crawlen",
+        "rescanToast": "Neuer Crawl gestartet",
+        "cancel": "Scan abbrechen",
+        "lastScan": "Letzter Scan",
+        "url": "URL",
+        "testUrl": "Vorschau",
+        "previewTitle": "Extraktions-Vorschau",
+        "maxDepth": "Max. Tiefe",
+        "maxPages": "Max. Seiten",
+        "includePatterns": "Einschließen (Regex)",
+        "excludePatterns": "Ausschließen (Regex)",
+        "patternsHint": "Komma- oder zeilenweise getrennte reguläre Ausdrücke, auf die komplette URL angewendet.",
+        "sameOrigin": {
+          "label": "Auf gleicher Origin bleiben",
+          "hint": "Nur Links auf demselben Host verfolgen."
+        },
+        "scope": {
+          "label": "Crawl-Umfang",
+          "single": { "label": "Einzelseite", "hint": "Nur diese URL indizieren.", "badge": "Seite" },
+          "site": { "label": "Website", "hint": "Links ab dieser URL verfolgen.", "badge": "Site" },
+          "sitemap": { "label": "Sitemap", "hint": "/sitemap.xml verwenden, falls vorhanden.", "badge": "Sitemap" }
+        },
+        "refresh": {
+          "label": "Aktualisierung",
+          "manual": "Nur manuell",
+          "daily": "Täglich",
+          "weekly": "Wöchentlich",
+          "monthly": "Monatlich"
+        },
+        "status": {
+          "idle": "Bereit",
+          "crawling": "Crawlt",
+          "error": "Fehler"
+        },
+        "phase": {
+          "queue": "In Warteschlange",
+          "fetch": "Lade",
+          "extract": "Extrahiere",
+          "cache": "Speichere",
+          "ingest": "Indiziere",
+          "skip": "Überspringe",
+          "done": "Fertig",
+          "error": "Fehler"
+        }
       }
     },
     "graph": {

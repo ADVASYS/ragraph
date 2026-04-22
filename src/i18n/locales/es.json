@@ -102,6 +102,7 @@
       "reingest": "Re-indexar",
       "remove": "Eliminar",
       "open": "Abrir",
+      "openUrl": "Abrir URL",
       "reveal": "Mostrar en carpeta",
       "rescan": "Re-escanear",
       "filters": { "all": "Todos", "search": "Buscar archivos…" },
@@ -124,6 +125,52 @@
         "analyzeStructure": "extrayendo estructura",
         "embedStep": "fragmento {{step}}/{{total}}",
         "graph": "persistiendo grafo"
+      },
+      "webSources": {
+        "title": "Fuentes web",
+        "addSource": "Añadir fuente web",
+        "addDescription": "Rastrea una URL e indexa las páginas automáticamente en este universo.",
+        "create": "Añadir fuente",
+        "createdToast": "Fuente web en cola para rastrear",
+        "empty": "Aún no hay fuentes web. Añade una URL.",
+        "deleteConfirm": "¿Eliminar esta fuente web y todas las páginas indexadas?",
+        "rescan": "Re-rastrear",
+        "rescanToast": "Nuevo rastreo iniciado",
+        "cancel": "Cancelar análisis",
+        "lastScan": "Último análisis",
+        "url": "URL",
+        "testUrl": "Vista previa",
+        "previewTitle": "Vista previa de extracción",
+        "maxDepth": "Profundidad máx.",
+        "maxPages": "Páginas máx.",
+        "includePatterns": "Incluir (regex)",
+        "excludePatterns": "Excluir (regex)",
+        "patternsHint": "Expresiones regulares separadas por coma o salto de línea, aplicadas a la URL completa.",
+        "sameOrigin": { "label": "Mismo dominio", "hint": "Seguir solo enlaces del mismo host." },
+        "scope": {
+          "label": "Alcance",
+          "single": { "label": "Página única", "hint": "Indexar solo esta URL.", "badge": "página" },
+          "site": { "label": "Sitio", "hint": "Seguir enlaces desde esta URL.", "badge": "sitio" },
+          "sitemap": { "label": "Sitemap", "hint": "Usar /sitemap.xml si está disponible.", "badge": "sitemap" }
+        },
+        "refresh": {
+          "label": "Actualización",
+          "manual": "Solo manual",
+          "daily": "Cada día",
+          "weekly": "Cada semana",
+          "monthly": "Cada mes"
+        },
+        "status": { "idle": "Inactivo", "crawling": "Rastreando", "error": "Error" },
+        "phase": {
+          "queue": "En cola",
+          "fetch": "Descargando",
+          "extract": "Extrayendo",
+          "cache": "Caché",
+          "ingest": "Indexando",
+          "skip": "Omitido",
+          "done": "Listo",
+          "error": "Error"
+        }
       }
     },
     "graph": {

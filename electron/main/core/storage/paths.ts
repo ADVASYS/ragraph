@@ -53,4 +53,16 @@ export class StoragePaths {
     mkdirSync(p, { recursive: true });
     return p;
   }
+
+  get webCacheRoot(): string {
+    const p = join(this.root, "web");
+    mkdirSync(p, { recursive: true });
+    return p;
+  }
+
+  webCacheDir(universeId: string, sourceId: string): string {
+    const p = join(this.webCacheRoot, universeId, sourceId);
+    mkdirSync(p, { recursive: true });
+    return p;
+  }
 }

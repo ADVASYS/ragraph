@@ -130,6 +130,7 @@
       "reingest": "Re-ingest",
       "remove": "Remove",
       "open": "Open",
+      "openUrl": "Open URL",
       "reveal": "Reveal in folder",
       "rescan": "Rescan",
       "filters": {
@@ -155,6 +156,59 @@
         "analyzeStructure": "extracting structure",
         "embedStep": "chunk {{step}}/{{total}}",
         "graph": "persisting graph"
+      },
+      "webSources": {
+        "title": "Web sources",
+        "addSource": "Add web source",
+        "addDescription": "Crawl a URL and auto-index the pages into this universe.",
+        "create": "Add source",
+        "createdToast": "Web source queued for crawling",
+        "empty": "No web sources yet. Add a URL to crawl.",
+        "deleteConfirm": "Delete this web source and all indexed pages?",
+        "rescan": "Rescan now",
+        "rescanToast": "Re-crawl started",
+        "cancel": "Cancel scan",
+        "lastScan": "Last scan",
+        "url": "URL",
+        "testUrl": "Preview",
+        "previewTitle": "Extraction preview",
+        "maxDepth": "Max depth",
+        "maxPages": "Max pages",
+        "includePatterns": "Include (regex)",
+        "excludePatterns": "Exclude (regex)",
+        "patternsHint": "Comma- or newline-separated regular expressions matched against the full URL.",
+        "sameOrigin": {
+          "label": "Stay on same origin",
+          "hint": "Only follow links on the same host."
+        },
+        "scope": {
+          "label": "Crawl scope",
+          "single": { "label": "Single page", "hint": "Index only this URL.", "badge": "page" },
+          "site": { "label": "Site", "hint": "Follow links from this URL.", "badge": "site" },
+          "sitemap": { "label": "Sitemap", "hint": "Use /sitemap.xml when available.", "badge": "sitemap" }
+        },
+        "refresh": {
+          "label": "Refresh",
+          "manual": "Manual only",
+          "daily": "Every day",
+          "weekly": "Every week",
+          "monthly": "Every month"
+        },
+        "status": {
+          "idle": "Idle",
+          "crawling": "Crawling",
+          "error": "Error"
+        },
+        "phase": {
+          "queue": "Queuing",
+          "fetch": "Fetching",
+          "extract": "Extracting",
+          "cache": "Caching",
+          "ingest": "Indexing",
+          "skip": "Skipping",
+          "done": "Done",
+          "error": "Error"
+        }
       }
     },
     "graph": {

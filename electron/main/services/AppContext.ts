@@ -11,15 +11,22 @@ import { buildLLM, type LLMProviderHandle } from "../core/providers/LLMProvider"
 import { IngestionPipeline, type IngestionFileRecord, type UniverseIngestionStores } from "../core/ingestion/IngestionPipeline";
 import { MountWatcher, type WatcherEvent } from "../core/ingestion/Watcher";
 import { GraphConsolidator, type ConsolidationProgress } from "../core/knowledge/GraphConsolidator";
+import { WebCrawler, type WebCrawlerRepository, type WebFileRow, type WebPageRow, removeCachedFile } from "../core/ingestion/web/WebCrawler";
+import { WebScheduler } from "../core/ingestion/web/WebScheduler";
 import { IPC } from "../../../shared/ipc";
 import {
   DEFAULT_AGENT_SETTINGS,
   DEFAULT_GRAPH_SETTINGS,
   type AppSettings,
+  type FileStatus,
   type IngestionProgress,
   type ProviderConfig,
   type AgentSettings,
   type GraphSettings,
+  type WebCrawlProgress,
+  type WebSource,
+  type WebSourceScope,
+  type WebSourceStatus,
 } from "../../../shared/types";
 
 /** How many ingested documents trigger a consolidation run per universe. */
@@ -45,12 +52,17 @@ export class AppContext {
   public readonly ingestion: IngestionPipeline;
   private consolidationRuns = new Map<string, { controller: AbortController; promise: Promise<void> }>();
   private consolidationQueue = new Map<string, boolean>();
+  private webCrawlers = new Map<string, WebCrawler>();
+  private webQueued = new Set<string>();
+  private webScheduler: WebScheduler | null = null;
+  private readonly webRepo: WebCrawlerRepository;
 
   private constructor(
     public readonly paths: StoragePaths,
     public readonly meta: MetaDatabase,
   ) {
     this.settingsCache = this.loadSettings();
+    this.webRepo = this.createWebRepository();
     this.ingestion = new IngestionPipeline(
       this.universeStoresCache,
       this.getEmbedder(),
@@ -112,6 +124,12 @@ export class AppContext {
       await this.startAllWatchers();
     } catch (err) {
       log.error("Failed to start watchers", err);
+    }
+    try {
+      this.webScheduler = new WebScheduler(() => this.webSchedulerTick());
+      this.webScheduler.start();
+    } catch (err) {
+      log.error("Failed to start web scheduler", err);
     }
   }
 
@@ -465,9 +483,350 @@ export class AppContext {
     this.consolidationRuns.get(universeId)?.controller.abort();
   }
 
+  // ----------------------------------------------------------------------
+  // Web sources
+  // ----------------------------------------------------------------------
+
+  listWebSources(universeId: string): WebSource[] {
+    const rows = this.meta.db
+      .prepare(
+        `SELECT id, universe_id as universeId, url, scope, max_depth as maxDepth, max_pages as maxPages,
+                same_origin as sameOrigin, include_patterns as includePatterns, exclude_patterns as excludePatterns,
+                refresh_interval_hours as refreshIntervalHours, enabled, status, last_scan_at as lastScanAt,
+                next_scan_at as nextScanAt, error, created_at as createdAt, updated_at as updatedAt
+         FROM web_sources WHERE universe_id = ? ORDER BY created_at`,
+      )
+      .all(universeId) as WebSourceRow[];
+    return rows.map((r) => this.rowToWebSource(r));
+  }
+
+  getWebSource(sourceId: string): WebSource | null {
+    const row = this.meta.db
+      .prepare(
+        `SELECT id, universe_id as universeId, url, scope, max_depth as maxDepth, max_pages as maxPages,
+                same_origin as sameOrigin, include_patterns as includePatterns, exclude_patterns as excludePatterns,
+                refresh_interval_hours as refreshIntervalHours, enabled, status, last_scan_at as lastScanAt,
+                next_scan_at as nextScanAt, error, created_at as createdAt, updated_at as updatedAt
+         FROM web_sources WHERE id = ?`,
+      )
+      .get(sourceId) as WebSourceRow | undefined;
+    return row ? this.rowToWebSource(row) : null;
+  }
+
+  createWebSource(input: {
+    universeId: string;
+    url: string;
+    scope: WebSourceScope;
+    maxDepth: number;
+    maxPages: number;
+    sameOrigin: boolean;
+    includePatterns?: string[];
+    excludePatterns?: string[];
+    refreshIntervalHours?: number | null;
+  }): string {
+    const id = nanoid();
+    const now = Date.now();
+    this.meta.db
+      .prepare(
+        `INSERT INTO web_sources
+           (id, universe_id, url, scope, max_depth, max_pages, same_origin, include_patterns, exclude_patterns,
+            refresh_interval_hours, enabled, status, last_scan_at, next_scan_at, error, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'idle', NULL, ?, NULL, ?, ?)`,
+      )
+      .run(
+        id,
+        input.universeId,
+        input.url,
+        input.scope,
+        input.maxDepth,
+        input.maxPages,
+        input.sameOrigin ? 1 : 0,
+        JSON.stringify(input.includePatterns ?? []),
+        JSON.stringify(input.excludePatterns ?? []),
+        input.refreshIntervalHours && input.refreshIntervalHours > 0 ? input.refreshIntervalHours : null,
+        now,
+        now,
+        now,
+      );
+    return id;
+  }
+
+  updateWebSource(id: string, patch: Partial<WebSource>): void {
+    const existing = this.getWebSource(id);
+    if (!existing) return;
+    const fields: Array<[keyof WebSource, string, (v: unknown) => unknown]> = [
+      ["url", "url", (v) => v],
+      ["scope", "scope", (v) => v],
+      ["maxDepth", "max_depth", (v) => v],
+      ["maxPages", "max_pages", (v) => v],
+      ["sameOrigin", "same_origin", (v) => (v ? 1 : 0)],
+      ["includePatterns", "include_patterns", (v) => JSON.stringify(v ?? [])],
+      ["excludePatterns", "exclude_patterns", (v) => JSON.stringify(v ?? [])],
+      ["refreshIntervalHours", "refresh_interval_hours", (v) => (v && (v as number) > 0 ? v : null)],
+      ["enabled", "enabled", (v) => (v ? 1 : 0)],
+    ];
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    for (const [key, column, transform] of fields) {
+      if (key in patch) {
+        sets.push(`${column} = ?`);
+        vals.push(transform(patch[key]));
+      }
+    }
+    if (!sets.length) return;
+    sets.push("updated_at = ?");
+    vals.push(Date.now());
+    vals.push(id);
+    this.meta.db.prepare(`UPDATE web_sources SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
+  }
+
+  async deleteWebSource(id: string): Promise<void> {
+    const source = this.getWebSource(id);
+    if (!source) return;
+    const crawler = this.webCrawlers.get(id);
+    if (crawler) {
+      crawler.abort();
+      this.webCrawlers.delete(id);
+    }
+
+    const files = this.meta.db
+      .prepare(
+        "SELECT id, universe_id as universeId, abs_path as absPath, rel_path as relPath FROM files WHERE web_source_id = ?",
+      )
+      .all(id) as Array<{ id: string; universeId: string; absPath: string; relPath: string }>;
+    for (const f of files) {
+      try {
+        await this.ingestion.removeFile({
+          id: f.id,
+          universeId: f.universeId,
+          absPath: f.absPath,
+          relPath: f.relPath,
+          mtime: 0,
+          size: 0,
+          hash: null,
+          status: "deleted",
+        });
+      } catch (err) {
+        log.warn("web.delete.removeFile failed", { fileId: f.id, err: (err as Error).message });
+      }
+      await removeCachedFile(f.absPath);
+    }
+    // ON DELETE CASCADE wipes web_pages + files rows referencing this source.
+    this.meta.db.prepare("DELETE FROM web_sources WHERE id = ?").run(id);
+  }
+
+  async runWebCrawl(sourceId: string): Promise<void> {
+    if (this.webCrawlers.has(sourceId)) return;
+    const source = this.getWebSource(sourceId);
+    if (!source || !source.enabled) return;
+    await this.getUniverseStores(source.universeId);
+
+    const crawler = new WebCrawler(source, {
+      pipeline: this.ingestion,
+      repo: this.webRepo,
+      cacheDir: (uid, sid) => this.paths.webCacheDir(uid, sid),
+      emitProgress: (p: WebCrawlProgress) => this.emit(IPC.Events.WebCrawlProgress, p),
+    });
+    this.webCrawlers.set(sourceId, crawler);
+    try {
+      await crawler.run();
+    } finally {
+      this.webCrawlers.delete(sourceId);
+    }
+  }
+
+  cancelWebCrawl(sourceId: string): void {
+    this.webCrawlers.get(sourceId)?.abort();
+  }
+
+  isWebCrawlRunning(sourceId: string): boolean {
+    return this.webCrawlers.has(sourceId);
+  }
+
+  private async webSchedulerTick(): Promise<void> {
+    const now = Date.now();
+    const rows = this.meta.db
+      .prepare(
+        `SELECT id FROM web_sources
+         WHERE enabled = 1 AND refresh_interval_hours IS NOT NULL AND refresh_interval_hours > 0
+           AND (next_scan_at IS NULL OR next_scan_at <= ?)`,
+      )
+      .all(now) as Array<{ id: string }>;
+    for (const r of rows) {
+      if (this.webCrawlers.has(r.id) || this.webQueued.has(r.id)) continue;
+      this.webQueued.add(r.id);
+      void this.runWebCrawl(r.id)
+        .catch((err) => log.warn("web.scheduler.run failed", { sourceId: r.id, err: (err as Error).message }))
+        .finally(() => this.webQueued.delete(r.id));
+    }
+  }
+
+  private rowToWebSource(row: WebSourceRow): WebSource {
+    return {
+      id: row.id,
+      universeId: row.universeId,
+      url: row.url,
+      scope: row.scope as WebSourceScope,
+      maxDepth: row.maxDepth,
+      maxPages: row.maxPages,
+      sameOrigin: Boolean(row.sameOrigin),
+      includePatterns: safeJson<string[]>(row.includePatterns) ?? [],
+      excludePatterns: safeJson<string[]>(row.excludePatterns) ?? [],
+      refreshIntervalHours: row.refreshIntervalHours,
+      enabled: Boolean(row.enabled),
+      status: row.status as WebSourceStatus,
+      lastScanAt: row.lastScanAt,
+      nextScanAt: row.nextScanAt,
+      error: row.error,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  private createWebRepository(): WebCrawlerRepository {
+    const db = this.meta.db;
+    const mapPageRow = (r: WebPageDbRow): WebPageRow => ({
+      id: r.id,
+      sourceId: r.sourceId,
+      universeId: r.universeId,
+      url: r.url,
+      normalizedUrl: r.normalizedUrl,
+      httpStatus: r.httpStatus,
+      contentHash: r.contentHash,
+      etag: r.etag,
+      lastModified: r.lastModified,
+      fetchedAt: r.fetchedAt,
+      depth: r.depth,
+      fileId: r.fileId,
+    });
+    return {
+      getPage: (sourceId, normalizedUrl) => {
+        const row = db
+          .prepare(
+            `SELECT id, source_id as sourceId, universe_id as universeId, url, normalized_url as normalizedUrl,
+                    http_status as httpStatus, content_hash as contentHash, etag, last_modified as lastModified,
+                    fetched_at as fetchedAt, depth, file_id as fileId
+             FROM web_pages WHERE source_id = ? AND normalized_url = ?`,
+          )
+          .get(sourceId, normalizedUrl) as WebPageDbRow | undefined;
+        return row ? mapPageRow(row) : null;
+      },
+      upsertPage: (row) => {
+        db.prepare(
+          `INSERT INTO web_pages (id, source_id, universe_id, url, normalized_url, http_status, content_hash,
+                                  etag, last_modified, fetched_at, depth, file_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(source_id, normalized_url) DO UPDATE SET
+             url = excluded.url,
+             http_status = excluded.http_status,
+             content_hash = excluded.content_hash,
+             etag = excluded.etag,
+             last_modified = excluded.last_modified,
+             fetched_at = excluded.fetched_at,
+             depth = excluded.depth,
+             file_id = excluded.file_id`,
+        ).run(
+          row.id,
+          row.sourceId,
+          row.universeId,
+          row.url,
+          row.normalizedUrl,
+          row.httpStatus,
+          row.contentHash,
+          row.etag,
+          row.lastModified,
+          row.fetchedAt,
+          row.depth,
+          row.fileId,
+        );
+      },
+      listPages: (sourceId) => {
+        const rows = db
+          .prepare(
+            `SELECT id, source_id as sourceId, universe_id as universeId, url, normalized_url as normalizedUrl,
+                    http_status as httpStatus, content_hash as contentHash, etag, last_modified as lastModified,
+                    fetched_at as fetchedAt, depth, file_id as fileId
+             FROM web_pages WHERE source_id = ?`,
+          )
+          .all(sourceId) as WebPageDbRow[];
+        return rows.map(mapPageRow);
+      },
+      getFileByPath: (universeId, absPath) => {
+        const row = db
+          .prepare(
+            `SELECT id, universe_id as universeId, web_source_id as webSourceId, abs_path as absPath,
+                    rel_path as relPath, mtime, size, hash, status
+             FROM files WHERE universe_id = ? AND abs_path = ?`,
+          )
+          .get(universeId, absPath) as WebFileDbRow | undefined;
+        if (!row || !row.webSourceId) return null;
+        return {
+          id: row.id,
+          universeId: row.universeId,
+          webSourceId: row.webSourceId,
+          absPath: row.absPath,
+          relPath: row.relPath,
+          mtime: row.mtime,
+          size: row.size,
+          hash: row.hash,
+          status: row.status as FileStatus,
+        };
+      },
+      insertFile: (row: WebFileRow) => {
+        db.prepare(
+          `INSERT INTO files (id, universe_id, mount_id, web_source_id, abs_path, rel_path, mtime, size, hash, status, error, ingested_at)
+           VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
+        ).run(
+          row.id,
+          row.universeId,
+          row.webSourceId,
+          row.absPath,
+          row.relPath,
+          row.mtime,
+          row.size,
+          row.hash,
+          row.status,
+        );
+      },
+      updateFile: (id: string, patch: Partial<WebFileRow>) => {
+        const sets: string[] = [];
+        const vals: unknown[] = [];
+        const map: Array<[keyof WebFileRow, string]> = [
+          ["mtime", "mtime"],
+          ["size", "size"],
+          ["hash", "hash"],
+          ["status", "status"],
+        ];
+        for (const [key, column] of map) {
+          if (key in patch) {
+            sets.push(`${column} = ?`);
+            vals.push(patch[key]);
+          }
+        }
+        if (!sets.length) return;
+        vals.push(id);
+        db.prepare(`UPDATE files SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
+      },
+      setSourceStatus: (sourceId, status, error) => {
+        db.prepare(
+          "UPDATE web_sources SET status = ?, error = ?, updated_at = ? WHERE id = ?",
+        ).run(status, error, Date.now(), sourceId);
+      },
+      setSourceScanned: (sourceId, lastScanAt, nextScanAt) => {
+        db.prepare(
+          "UPDATE web_sources SET last_scan_at = ?, next_scan_at = ?, updated_at = ? WHERE id = ?",
+        ).run(lastScanAt, nextScanAt, Date.now(), sourceId);
+      },
+    };
+  }
+
   async dispose(): Promise<void> {
     for (const run of this.consolidationRuns.values()) run.controller.abort();
     this.consolidationRuns.clear();
+    for (const c of this.webCrawlers.values()) c.abort();
+    this.webCrawlers.clear();
+    this.webScheduler?.stop();
+    this.webScheduler = null;
     for (const w of this.watchers.values()) await w.stop();
     this.watchers.clear();
     for (const s of this.universeStoresCache.values()) {
@@ -477,6 +836,53 @@ export class AppContext {
     this.universeStoresCache.clear();
     this.meta.close();
   }
+}
+
+interface WebSourceRow {
+  id: string;
+  universeId: string;
+  url: string;
+  scope: string;
+  maxDepth: number;
+  maxPages: number;
+  sameOrigin: number;
+  includePatterns: string;
+  excludePatterns: string;
+  refreshIntervalHours: number | null;
+  enabled: number;
+  status: string;
+  lastScanAt: number | null;
+  nextScanAt: number | null;
+  error: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface WebPageDbRow {
+  id: string;
+  sourceId: string;
+  universeId: string;
+  url: string;
+  normalizedUrl: string;
+  httpStatus: number | null;
+  contentHash: string | null;
+  etag: string | null;
+  lastModified: string | null;
+  fetchedAt: number | null;
+  depth: number;
+  fileId: string | null;
+}
+
+interface WebFileDbRow {
+  id: string;
+  universeId: string;
+  webSourceId: string | null;
+  absPath: string;
+  relPath: string;
+  mtime: number;
+  size: number;
+  hash: string | null;
+  status: string;
 }
 
 function safeJson<T>(raw: string): T | null {

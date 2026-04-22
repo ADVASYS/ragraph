@@ -44,6 +44,15 @@ const api = {
     rescan: (id: string) => invoke(IPC.Mount.Rescan, id),
     pickFolder: () => invoke(IPC.Mount.PickFolder),
   },
+  webSources: {
+    list: (universeId: string) => invoke(IPC.WebSource.List, universeId),
+    create: (input: unknown) => invoke(IPC.WebSource.Create, input),
+    update: (id: string, patch: unknown) => invoke(IPC.WebSource.Update, id, patch),
+    delete: (id: string) => invoke(IPC.WebSource.Delete, id),
+    rescan: (id: string) => invoke(IPC.WebSource.Rescan, id),
+    cancelScan: (id: string) => invoke(IPC.WebSource.CancelScan, id),
+    testUrl: (url: string) => invoke(IPC.WebSource.TestUrl, url),
+  },
   files: {
     list: (universeId: string, filter?: unknown) => invoke(IPC.Files.List, universeId, filter),
     reingest: (fileId: string) => invoke(IPC.Files.Reingest, fileId),
@@ -90,6 +99,7 @@ const api = {
     onChatError: (cb: (payload: unknown) => void) => on(IPC.Events.ChatError, cb),
     onUniverseChanged: (cb: (payload: unknown) => void) => on(IPC.Events.UniverseChanged, cb),
     onGraphConsolidation: (cb: (payload: unknown) => void) => on(IPC.Events.GraphConsolidation, cb),
+    onWebCrawl: (cb: (payload: unknown) => void) => on(IPC.Events.WebCrawlProgress, cb),
   },
 };
 

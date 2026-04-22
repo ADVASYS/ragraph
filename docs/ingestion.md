@@ -4,7 +4,9 @@ Ingestion is how raw files on disk become first-class citizens of a RAGraph univ
 
 ## Inputs
 
-A universe owns zero or more **folder mounts**. Each mount is a directory on disk, optional include/exclude globs, and an enabled flag. Watchers are per mount and live in `AppContext`.
+A universe owns zero or more **folder mounts** and zero or more **web sources**. Each mount is a directory on disk, optional include/exclude globs, and an enabled flag. Watchers are per mount and live in `AppContext`.
+
+Web sources are crawled autonomously — fetched, extracted to Markdown in a local cache, and then handed to the same ingestion pipeline described here. See [web-sources.md](./web-sources.md) for the crawl lifecycle.
 
 ## Watcher
 

@@ -99,6 +99,69 @@ export interface FolderMount {
   lastScanAt: number | null;
 }
 
+export type WebSourceScope = "single" | "site" | "sitemap";
+export type WebSourceStatus = "idle" | "crawling" | "error";
+
+export interface WebSource {
+  id: string;
+  universeId: string;
+  url: string;
+  scope: WebSourceScope;
+  maxDepth: number;
+  maxPages: number;
+  sameOrigin: boolean;
+  includePatterns: string[];
+  excludePatterns: string[];
+  /** Null or 0 disables automatic refresh. */
+  refreshIntervalHours: number | null;
+  enabled: boolean;
+  status: WebSourceStatus;
+  lastScanAt: number | null;
+  nextScanAt: number | null;
+  error: string | null;
+  createdAt: number;
+  updatedAt: number;
+  stats?: WebSourceStats;
+}
+
+export interface WebSourceStats {
+  pagesDiscovered: number;
+  pagesIngested: number;
+  pagesFailed: number;
+}
+
+export type WebCrawlPhase =
+  | "queue"
+  | "fetch"
+  | "extract"
+  | "cache"
+  | "ingest"
+  | "skip"
+  | "done"
+  | "error";
+
+export interface WebCrawlProgress {
+  universeId: string;
+  sourceId: string;
+  phase: WebCrawlPhase;
+  currentUrl?: string;
+  pagesDiscovered: number;
+  pagesFetched: number;
+  pagesSkipped: number;
+  pagesFailed: number;
+  maxPages: number;
+  message?: string;
+}
+
+export interface WebPagePreview {
+  url: string;
+  title: string;
+  excerpt: string;
+  byline: string | null;
+  lang: string | null;
+  markdownLength: number;
+}
+
 export type FileStatus =
   | "pending"
   | "processing"
@@ -110,7 +173,12 @@ export type FileStatus =
 export interface IndexedFile {
   id: string;
   universeId: string;
-  mountId: string;
+  /** Null for files that were scraped from a web source. */
+  mountId: string | null;
+  /** Null for files that originate from a folder mount. */
+  webSourceId: string | null;
+  /** Canonical source URL for web-sourced files; null otherwise. */
+  webUrl: string | null;
   absPath: string;
   relPath: string;
   mtime: number;

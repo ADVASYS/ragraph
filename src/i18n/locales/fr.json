@@ -102,6 +102,7 @@
       "reingest": "Ré-indexer",
       "remove": "Retirer",
       "open": "Ouvrir",
+      "openUrl": "Ouvrir l'URL",
       "reveal": "Afficher dans le dossier",
       "rescan": "Re-scanner",
       "filters": { "all": "Tous", "search": "Rechercher des fichiers…" },
@@ -124,6 +125,52 @@
         "analyzeStructure": "extraction de la structure",
         "embedStep": "fragment {{step}}/{{total}}",
         "graph": "persistance du graphe"
+      },
+      "webSources": {
+        "title": "Sources web",
+        "addSource": "Ajouter une source web",
+        "addDescription": "Explorez une URL et indexez automatiquement les pages dans cet univers.",
+        "create": "Ajouter la source",
+        "createdToast": "Source web mise en file d'attente",
+        "empty": "Aucune source web. Ajoutez une URL.",
+        "deleteConfirm": "Supprimer cette source web et toutes les pages indexées ?",
+        "rescan": "Re-explorer",
+        "rescanToast": "Nouvelle exploration démarrée",
+        "cancel": "Annuler l'analyse",
+        "lastScan": "Dernière analyse",
+        "url": "URL",
+        "testUrl": "Aperçu",
+        "previewTitle": "Aperçu de l'extraction",
+        "maxDepth": "Profondeur max.",
+        "maxPages": "Pages max.",
+        "includePatterns": "Inclure (regex)",
+        "excludePatterns": "Exclure (regex)",
+        "patternsHint": "Regex séparées par virgule ou saut de ligne, appliquées à l'URL complète.",
+        "sameOrigin": { "label": "Rester sur le même domaine", "hint": "Ne suivre que les liens du même hôte." },
+        "scope": {
+          "label": "Portée",
+          "single": { "label": "Page unique", "hint": "Indexer seulement cette URL.", "badge": "page" },
+          "site": { "label": "Site", "hint": "Suivre les liens à partir de cette URL.", "badge": "site" },
+          "sitemap": { "label": "Sitemap", "hint": "Utiliser /sitemap.xml si disponible.", "badge": "sitemap" }
+        },
+        "refresh": {
+          "label": "Actualisation",
+          "manual": "Manuelle uniquement",
+          "daily": "Chaque jour",
+          "weekly": "Chaque semaine",
+          "monthly": "Chaque mois"
+        },
+        "status": { "idle": "Inactif", "crawling": "Analyse", "error": "Erreur" },
+        "phase": {
+          "queue": "File",
+          "fetch": "Téléchargement",
+          "extract": "Extraction",
+          "cache": "Cache",
+          "ingest": "Indexation",
+          "skip": "Ignoré",
+          "done": "Terminé",
+          "error": "Erreur"
+        }
       }
     },
     "graph": {

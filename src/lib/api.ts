@@ -12,6 +12,9 @@ import type {
   ProviderConfig,
   Universe,
   UniverseStats,
+  WebPagePreview,
+  WebSource,
+  WebSourceScope,
 } from "@shared/types";
 
 export interface RagraphApi {
@@ -35,6 +38,25 @@ export interface RagraphApi {
     delete(id: string): Promise<void>;
     rescan(id: string): Promise<void>;
     pickFolder(): Promise<string | null>;
+  };
+  webSources: {
+    list(universeId: string): Promise<WebSource[]>;
+    create(input: {
+      universeId: string;
+      url: string;
+      scope?: WebSourceScope;
+      maxDepth?: number;
+      maxPages?: number;
+      sameOrigin?: boolean;
+      includePatterns?: string[];
+      excludePatterns?: string[];
+      refreshIntervalHours?: number | null;
+    }): Promise<string>;
+    update(id: string, patch: Partial<WebSource>): Promise<void>;
+    delete(id: string): Promise<void>;
+    rescan(id: string): Promise<void>;
+    cancelScan(id: string): Promise<void>;
+    testUrl(url: string): Promise<WebPagePreview>;
   };
   files: {
     list(universeId: string, filter?: { status?: string | null; search?: string }): Promise<IndexedFile[]>;
@@ -79,6 +101,7 @@ export interface RagraphApi {
     onChatError(cb: (payload: unknown) => void): () => void;
     onUniverseChanged(cb: (payload: unknown) => void): () => void;
     onGraphConsolidation(cb: (payload: unknown) => void): () => void;
+    onWebCrawl(cb: (payload: unknown) => void): () => void;
   };
 }
 

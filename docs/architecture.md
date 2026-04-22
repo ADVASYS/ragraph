@@ -83,6 +83,7 @@ The core is **framework-independent** (see [modules.md](./modules.md) §1): no i
 - **`Analyzer`** — Vercel AI SDK `streamObject` with a Zod schema that returns `title`, `domain`, `summary`, `topics[]`, `keywords[]`, `entities[]` **and** `relations[]` (explicit `related` and `part_of` pairs). For long documents it runs map-reduce over chunks before producing the global summary.
 - **`Watcher`** — chokidar with debouncing, mapping filesystem events into `WatcherEvent`s.
 - **`IngestionPipeline`** — p-queue orchestration per universe. Steps: hash → parse → chunk → analyze → entity/topic resolution → embed → graph write → cross-document reference linking → metadata update → progress event.
+- **`web/`** — autonomous web-source crawler. `HtmlExtractor` converts fetched HTML to clean Markdown using `linkedom` + `@mozilla/readability` + `turndown`; `RobotsParser` honors `robots.txt` and crawl-delay; `WebCrawler` drives a BFS queue with sitemap seeding, ETag/Last-Modified conditional refresh, and per-page content-hash dedupe; `WebScheduler` wakes idle sources on their refresh interval. Output is a Markdown file in `paths.webCacheDir(...)` that re-enters the same `IngestionPipeline` as any other document. See [web-sources.md](./web-sources.md).
 
 ### `knowledge/`
 
@@ -103,6 +104,7 @@ IPC handlers live in `electron/main/ipc/*.ts`, one file per domain. Every handle
 | Event channel | Payload |
 | --- | --- |
 | `events:ingestion` | `IngestionProgress` (phase, percent, step/total, message) |
+| `events:web-crawl` | `WebCrawlProgress` (phase, pagesDiscovered/Fetched/Skipped/Failed, currentUrl) |
 | `events:chat-chunk` | Streaming text delta per token group |
 | `events:chat-tool-call` | `ToolInvocation` (start + result) |
 | `events:chat-done` | Final `ChatMessage` with sources |

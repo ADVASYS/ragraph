@@ -25,6 +25,15 @@ export const IPC = {
     Rescan: "mount:rescan",
     PickFolder: "mount:pick-folder",
   },
+  WebSource: {
+    List: "webSource:list",
+    Create: "webSource:create",
+    Update: "webSource:update",
+    Delete: "webSource:delete",
+    Rescan: "webSource:rescan",
+    CancelScan: "webSource:cancel-scan",
+    TestUrl: "webSource:test-url",
+  },
   Files: {
     List: "files:list",
     Reingest: "files:reingest",
@@ -70,6 +79,7 @@ export const IPC = {
     ChatError: "events:chat-error",
     UniverseChanged: "events:universe-changed",
     GraphConsolidation: "events:graph-consolidation",
+    WebCrawlProgress: "events:web-crawl",
   },
 } as const;
 

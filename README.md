@@ -31,8 +31,9 @@ Classical RAG dumps every chunk it finds into the prompt. RAGraph treats knowled
 ## Highlights
 
 - Connect **any OpenAI-compatible endpoint** — OpenAI, Azure OpenAI, OpenRouter, Together, Groq, LM Studio, Ollama, llama.cpp server, vLLM, …
-- Create unlimited **Universes** — each with its own graph, vector collection, chats, folder mounts and settings
+- Create unlimited **Universes** — each with its own graph, vector collection, chats, folder mounts, web sources and settings
 - **Automatic ingestion** of watched folders: parse → chunk → structured LLM analysis → entity/topic resolution → embed → graph write → cross-document linking
+- **Autonomous web crawler** per universe — add a URL, RAGraph extracts, dedupes and indexes the pages into the same graph (sitemap-aware, robots.txt-respecting, ETag/Last-Modified refresh)
 - **Self-organizing knowledge graph** with embedding-based entity merging, topic clustering via `PART_OF`, document-similarity edges and degree-centrality
 - **Autonomous RAG agent** with eleven typed tools, loop detection, per-tool timeouts and budget controls
 - **Graph browser** with ELK layout, filters and neighborhood expansion; click-through to the originating document
@@ -258,6 +259,7 @@ Defaults are tuned for `multilingual-e5-small` embeddings; bump `entityMergeThre
 | [Module conventions](./docs/modules.md) | Hard rules for core, features and IPC |
 | [RAG pipeline](./docs/rag-pipeline.md) | Tool catalogue, execution loop, context budgeting |
 | [Ingestion](./docs/ingestion.md) | File lifecycle from watcher to graph |
+| [Web sources](./docs/web-sources.md) | Autonomous web crawler — scope, robots, dedupe, refresh |
 | [Graph schema](./docs/graph-schema.md) | Node and edge types, SQL schema, conventions |
 | [Retrieval](./docs/retrieval.md) | Hybrid fusion, graph expansion, cross-universe RRF |
 | [Self-organization](./docs/self-organization.md) | Entity merging, topic clustering, consolidator |
