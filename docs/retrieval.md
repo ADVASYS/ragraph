@@ -86,6 +86,22 @@ All knobs live in `AppSettings.graph` (editable in Settings → Knowledge graph)
 
 Defaults are tuned for `multilingual-e5-small`. With a stronger encoder (`bge-m3`, `nomic-embed-text-v1.5`, OpenAI `text-embedding-3-large`) raise `entityMergeThreshold` to avoid over-merging; lower `referenceMatchThreshold` only when you trust the analyzer's reference extraction.
 
+## Main-context hygiene
+
+`vectorSearch` (and every other heavy retrieval / navigation tool) no longer returns snippets to the outer agent. Each hit is:
+
+1. Written to a per-turn **evidence cache** (`Map<sourceId, EvidenceRecord>`) that holds the full text, metadata, originating tool and capture timestamp.
+2. Evaluated by a **sub-context relevance gate** — a small `generateText` call that receives the user goal and every candidate, and returns strict JSON verdicts `{ sourceId, relevance, why }`. See [rag-pipeline.md](rag-pipeline.md#sub-context-relevance-gate) for details.
+3. Projected to a compact tuple `{ sourceId, kind, title, relevance, why, universeId, universeName }` that is all the main model ever sees.
+
+To actually read a passage the agent uses the drill tools:
+
+- `inspect(sourceId, universeId?)` — pull the full cached text into the main context (or fetch it from SQLite on cache miss).
+- `quote(sourceId, question)` — return 1–3 verbatim supporting sentences from the cached source.
+- `summarizeSubthread(sourceIds, subQuestion)` — synthesize several sources in an isolated sub-thread.
+
+Every heavy tool also accepts an optional `subGoal` argument that sharpens the relevance gate without tripping loop detection (the field is stripped from the fingerprint in `Agent.wrapTools`).
+
 ## Operational notes
 
 - **Latency.** FTS and vector searches run in parallel. Graph expansion adds a single round-trip to SQLite for neighborhood queries and one batched `getBySourceIds` to LanceDB.

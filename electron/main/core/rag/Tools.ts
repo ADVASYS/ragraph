@@ -5,6 +5,7 @@ import type { VectorStore, VectorSearchHit } from "../storage/VectorStore";
 import type { Embedder } from "../providers/Embedder";
 import type { LLMProviderHandle } from "../providers/LLMProvider";
 import { generateText } from "ai";
+import { evaluateRelevance, type GateVerdict, type Relevance } from "./RelevanceGate";
 
 export interface UniverseBundle {
   id: string;
@@ -18,6 +19,26 @@ export interface AgentRetrievalConfig {
   graphExpansionEnabled: boolean;
   graphExpansionDepth: number;
   graphExpansionWeight: number;
+}
+
+/**
+ * Full-fidelity record of one hit kept in the per-turn evidence cache. The
+ * main model only ever sees the compact projection built by `gateAndCache`;
+ * the full `text` / `meta` remain here and can be pulled on demand via the
+ * `inspect` or `quote` drills.
+ */
+export interface EvidenceRecord {
+  sourceId: string;
+  kind: string;
+  title: string;
+  text: string;
+  universeId: string;
+  universeName?: string;
+  fileId?: string | null;
+  graphNodeId?: string | null;
+  toolName: string;
+  capturedAt: number;
+  meta?: Record<string, unknown>;
 }
 
 export interface ToolsContext {
@@ -36,6 +57,17 @@ export interface ToolsContext {
   >;
   recordSource: (hit: VectorSearchHit & { universeName?: string }) => void;
   retrieval?: AgentRetrievalConfig;
+  /**
+   * Per-turn evidence cache. Heavy retrieval/navigation tools populate this
+   * with full payloads; the main model can pull a cached record back via
+   * the `inspect` / `quote` drills without re-running the tool.
+   */
+  evidence: Map<string, EvidenceRecord>;
+  /**
+   * Current agent goal — typically the last user message for the turn.
+   * Tools can override with a per-call `subGoal` to sharpen the gate.
+   */
+  goalRef: { current: string };
 }
 
 /**
@@ -63,6 +95,30 @@ const DEFAULT_RETRIEVAL: AgentRetrievalConfig = {
   graphExpansionWeight: 0.4,
 };
 
+/** Compact projection returned to the main model after the relevance gate. */
+interface CompactRef {
+  sourceId: string;
+  kind: string;
+  title: string;
+  relevance: Relevance;
+  why: string;
+  universeId: string;
+  universeName?: string;
+}
+
+interface GateSubject {
+  sourceId: string;
+  kind: string;
+  title: string;
+  text: string;
+  universeId: string;
+  universeName?: string;
+  fileId?: string | null;
+  graphNodeId?: string | null;
+  hint?: string;
+  meta?: Record<string, unknown>;
+}
+
 /**
  * Construct the tool set exposed to the RAG agent. All tools are scoped to the
  * universes provided in the context — for universe chat this is [current], for
@@ -77,11 +133,78 @@ export function createTools(ctx: ToolsContext) {
       : ["__none__"],
   );
 
+  /**
+   * Run the full tool output through the relevance gate. Every subject is
+   * mirrored into the evidence cache first (so the main model can `inspect`
+   * dropped items later if it wants), then the compact verdicts are returned.
+   */
+  async function gateAndCache(
+    toolName: string,
+    subjects: GateSubject[],
+    subGoal: string | undefined,
+    maxKeep: number,
+  ): Promise<CompactRef[]> {
+    if (!subjects.length) return [];
+
+    const now = Date.now();
+    for (const s of subjects) {
+      if (!ctx.evidence.has(s.sourceId)) {
+        ctx.evidence.set(s.sourceId, {
+          sourceId: s.sourceId,
+          kind: s.kind,
+          title: s.title,
+          text: s.text,
+          universeId: s.universeId,
+          universeName: s.universeName,
+          fileId: s.fileId ?? null,
+          graphNodeId: s.graphNodeId ?? null,
+          toolName,
+          capturedAt: now,
+          meta: s.meta,
+        });
+      }
+    }
+
+    const verdict = await evaluateRelevance({
+      llm: ctx.llm,
+      goal: (subGoal && subGoal.trim()) || ctx.goalRef.current || "",
+      toolName,
+      maxKeep,
+      items: subjects.map((s) => ({
+        sourceId: s.sourceId,
+        title: s.title,
+        text: s.text,
+        hint: s.hint,
+      })),
+    });
+
+    const bySource = new Map(subjects.map((s) => [s.sourceId, s]));
+    const out: CompactRef[] = [];
+    for (const v of verdict.kept) {
+      const s = bySource.get(v.sourceId);
+      if (!s) continue;
+      out.push({
+        sourceId: s.sourceId,
+        kind: s.kind,
+        title: s.title,
+        relevance: v.relevance,
+        why: v.why,
+        universeId: s.universeId,
+        universeName: s.universeName,
+      });
+    }
+    return out;
+  }
+
   const vectorSearch = tool({
     description:
-      "Hybrid retrieval over the knowledge base. Runs semantic vector search and BM25 full-text search in parallel, fuses via reciprocal rank, then optionally expands the top hits through the knowledge graph. Use this as the default entry point for any fact-finding task.",
+      "Hybrid retrieval over the knowledge base (BM25 + vector, optional graph expansion). Results are evaluated by a relevance sub-LLM in a sub-context; you only receive a compact ranked list. Use `inspect(sourceId)` to pull the full passage into context when needed.",
     parameters: z.object({
       query: z.string().describe("Natural-language query."),
+      subGoal: z
+        .string()
+        .optional()
+        .describe("Optional refinement of the user's goal for the relevance gate (one short sentence)."),
       universeIds: z.array(universeIdEnum).optional(),
       kinds: z.array(z.enum(["doc_summary", "chunk", "entity", "topic", "agent_note"])).optional(),
       topK: z.number().int().min(1).max(30).default(8),
@@ -89,7 +212,7 @@ export function createTools(ctx: ToolsContext) {
       expandViaGraph: z.boolean().optional(),
       expansionDepth: z.number().int().min(0).max(2).optional(),
     }),
-    execute: async ({ query, universeIds, kinds, topK, domain, expandViaGraph, expansionDepth }) => {
+    execute: async ({ query, subGoal, universeIds, kinds, topK, domain, expandViaGraph, expansionDepth }) => {
       const targets = (universeIds && universeIds.length ? universeIds : ctx.universes.map((u) => u.id))
         .map((id) => uniById.get(id))
         .filter(Boolean) as UniverseBundle[];
@@ -125,35 +248,45 @@ export function createTools(ctx: ToolsContext) {
       );
       const merged = rrfMergeRanked(perUniverse, topK);
       for (const hit of merged) ctx.recordSource(hit);
-      return merged.map((h) => ({
-        id: h.id,
-        universeId: h.universe_id,
-        universeName: h.universeName,
+
+      const subjects: GateSubject[] = merged.map((h) => ({
+        sourceId: h.source_id,
         kind: h.kind,
         title: h.title,
-        snippet: h.text.slice(0, 400),
-        score: Number(h.score.toFixed(3)),
-        sourceId: h.source_id,
+        text: h.text,
+        universeId: h.universe_id,
+        universeName: h.universeName,
         fileId: h.file_id,
         graphNodeId: h.graph_node_id,
-        domain: h.domain,
-        topics: h.topics,
+        hint: h.domain ? `domain=${h.domain}` : undefined,
+        meta: { score: Number(h.score.toFixed(3)), topics: h.topics, domain: h.domain },
       }));
+
+      const compact = await gateAndCache("vectorSearch", subjects, subGoal, Math.min(topK, 6));
+      return {
+        goal: (subGoal && subGoal.trim()) || ctx.goalRef.current,
+        results: compact,
+        note: "Snippets are intentionally omitted. Call inspect(sourceId) or quote(sourceId, question) to read the passage.",
+      };
     },
   });
 
   const entitySearch = tool({
     description:
-      "Directly search for Entity nodes by name/description. Returns each entity enriched with aliases, centrality, top linked documents and its outgoing typed RELATED triples (predicate + object). Use this for questions about specific people, products, concepts or organizations before diving into documents.",
+      "Directly search for Entity nodes by name/description. Returns enriched entities (aliases, top linked documents, outgoing RELATED triples) filtered by a relevance sub-LLM. Use for questions about specific people, products, concepts or organizations.",
     parameters: z.object({
       query: z.string(),
+      subGoal: z
+        .string()
+        .optional()
+        .describe("Optional refinement of the user's goal for the relevance gate."),
       universeIds: z.array(universeIdEnum).optional(),
       topK: z.number().int().min(1).max(30).default(8),
       type: z.string().optional().describe("Optional filter on the canonical entity type (person, organization, product, ...)."),
       includeTriples: z.boolean().default(true).describe("If true, include up to 8 outgoing RELATED triples per entity."),
       includeDocuments: z.boolean().default(true).describe("If true, include the top 5 documents that mention each entity."),
     }),
-    execute: async ({ query, universeIds, topK, type, includeTriples, includeDocuments }) => {
+    execute: async ({ query, subGoal, universeIds, topK, type, includeTriples, includeDocuments }) => {
       const targets = (universeIds && universeIds.length ? universeIds : ctx.universes.map((u) => u.id))
         .map((id) => uniById.get(id))
         .filter(Boolean) as UniverseBundle[];
@@ -169,6 +302,7 @@ export function createTools(ctx: ToolsContext) {
       }
       const merged = rrfMergeRanked(perUniverse, topK);
       for (const h of merged) ctx.recordSource(h);
+
       const enriched = await Promise.all(
         merged.map(async (h) => {
           const u = uniById.get(h.universe_id);
@@ -183,44 +317,92 @@ export function createTools(ctx: ToolsContext) {
                 includeDocuments ? u.graph.documentsForEntity(h.source_id, 5) : Promise.resolve([]),
               ])
             : [[], []];
-          return {
-            sourceId: h.source_id,
-            universeId: h.universe_id,
-            universeName: h.universeName,
-            name: h.title,
-            type: h.domain,
-            description: h.text,
-            aliases,
-            centrality,
-            score: Number(h.score.toFixed(3)),
-            triples: triples.map((t) => ({
+          return { hit: h, node, aliases, centrality, triples, docs };
+        }),
+      );
+
+      const subjects: GateSubject[] = enriched.map((e) => {
+        const triplesLine = e.triples.length
+          ? e.triples
+              .map((t) => `${t.direction === "out" ? "->" : "<-"}[${t.predicate}] ${t.otherName}`)
+              .slice(0, 5)
+              .join("; ")
+          : "";
+        const docsLine = e.docs.length
+          ? e.docs
+              .map((d) => `${d.title} (${d.count})`)
+              .slice(0, 3)
+              .join("; ")
+          : "";
+        const hintParts: string[] = [];
+        if (e.hit.domain) hintParts.push(`type=${e.hit.domain}`);
+        if (e.aliases.length) hintParts.push(`aliases=${e.aliases.slice(0, 4).join(", ")}`);
+        if (triplesLine) hintParts.push(`triples: ${triplesLine}`);
+        if (docsLine) hintParts.push(`docs: ${docsLine}`);
+        return {
+          sourceId: e.hit.source_id,
+          kind: "entity",
+          title: e.hit.title,
+          text: e.hit.text,
+          universeId: e.hit.universe_id,
+          universeName: e.hit.universeName,
+          graphNodeId: e.hit.graph_node_id,
+          fileId: e.hit.file_id,
+          hint: hintParts.join(" | "),
+          meta: {
+            type: e.hit.domain,
+            aliases: e.aliases,
+            centrality: e.centrality,
+            triples: e.triples.map((t) => ({
               direction: t.direction,
               predicate: t.predicate,
               otherId: t.otherId,
               otherName: t.otherName,
               otherType: t.otherType,
             })),
-            linkedDocuments: docs.map((d) => ({ sourceId: d.documentId, title: d.title, mentionCount: d.count })),
-          };
-        }),
-      );
-      return enriched;
+            linkedDocuments: e.docs.map((d) => ({ sourceId: d.documentId, title: d.title, mentionCount: d.count })),
+          },
+        } satisfies GateSubject;
+      });
+
+      const compact = await gateAndCache("entitySearch", subjects, subGoal, Math.min(topK, 6));
+      // Expose the richer sub-structures (triples / linked docs) alongside the
+      // compact ref — they are tiny by construction and essential for further
+      // planning (e.g. which triple to follow next).
+      const bySubject = new Map(subjects.map((s) => [s.sourceId, s]));
+      const results = compact.map((c) => {
+        const s = bySubject.get(c.sourceId);
+        return {
+          ...c,
+          type: (s?.meta?.type as string | undefined) ?? "",
+          aliases: (s?.meta?.aliases as string[] | undefined) ?? [],
+          centrality: (s?.meta?.centrality as number | undefined) ?? 0,
+          triples: (s?.meta?.triples as unknown[] | undefined) ?? [],
+          linkedDocuments: (s?.meta?.linkedDocuments as unknown[] | undefined) ?? [],
+        };
+      });
+
+      return {
+        goal: (subGoal && subGoal.trim()) || ctx.goalRef.current,
+        results,
+        note: "Descriptions are intentionally omitted. Call inspect(sourceId) for the full entity description.",
+      };
     },
   });
 
   const findEntityMentions = tool({
     description:
-      "Return the chunks that actually mention a given entity, ordered by mention count. Use this right after entitySearch when you need the passages where the entity is discussed.",
+      "Return the chunks that actually mention a given entity, ordered by mention count, and filtered by the relevance sub-LLM. Use right after entitySearch when you need the passages where the entity is discussed.",
     parameters: z.object({
       universeId: universeIdEnum,
       entityId: z.string().describe("The sourceId of an Entity node (e.g. as returned by entitySearch)."),
+      subGoal: z.string().optional(),
       topK: z.number().int().min(1).max(20).default(8),
     }),
-    execute: async ({ universeId, entityId, topK }) => {
+    execute: async ({ universeId, entityId, subGoal, topK }) => {
       const u = uniById.get(universeId);
-      if (!u) return [];
+      if (!u) return { goal: ctx.goalRef.current, results: [] };
       const rows = await u.graph.chunksMentioningEntity(entityId, topK);
-      // Hydrate vector-side metadata (domain/topics) so the agent has full context.
       const hydrated = await u.vectors.getBySourceIds(rows.map((r) => r.chunkId));
       for (const r of rows) {
         const vec = hydrated.get(r.chunkId);
@@ -232,40 +414,74 @@ export function createTools(ctx: ToolsContext) {
           });
         }
       }
-      return rows.map((r) => ({
+
+      const subjects: GateSubject[] = rows.map((r) => ({
         sourceId: r.chunkId,
-        documentId: r.documentId,
-        documentTitle: r.documentTitle,
-        position: r.position,
-        snippet: r.text.slice(0, 500),
-        mentionCount: r.count,
+        kind: "chunk",
+        title: r.documentTitle || `chunk #${r.position}`,
+        text: r.text,
         universeId,
         universeName: u.name,
+        hint: `mentions=${r.count} in document "${r.documentTitle}"`,
+        meta: {
+          documentId: r.documentId,
+          documentTitle: r.documentTitle,
+          position: r.position,
+          mentionCount: r.count,
+        },
       }));
+
+      const compact = await gateAndCache("findEntityMentions", subjects, subGoal, Math.min(topK, 6));
+      return {
+        goal: (subGoal && subGoal.trim()) || ctx.goalRef.current,
+        results: compact.map((c) => {
+          const m = ctx.evidence.get(c.sourceId)?.meta ?? {};
+          return {
+            ...c,
+            documentId: (m as Record<string, unknown>).documentId,
+            position: (m as Record<string, unknown>).position,
+            mentionCount: (m as Record<string, unknown>).mentionCount,
+          };
+        }),
+      };
     },
   });
 
   const findRelatedDocs = tool({
     description:
-      "Find documents related to a given document through shared entities, topics, explicit references, or a combination.",
+      "Find documents related to a given document through shared entities, topics, explicit references, or a combination. Results are filtered by the relevance sub-LLM.",
     parameters: z.object({
       universeId: universeIdEnum,
       documentId: z.string(),
+      subGoal: z.string().optional(),
       via: z.enum(["entities", "topics", "references", "all"]).default("all"),
       topK: z.number().int().min(1).max(30).default(8),
     }),
-    execute: async ({ universeId, documentId, via, topK }) => {
+    execute: async ({ universeId, documentId, subGoal, via, topK }) => {
       const u = uniById.get(universeId);
-      if (!u) return [];
+      if (!u) return { goal: ctx.goalRef.current, results: [] };
       const rows = await u.graph.relatedDocuments(documentId, via, topK);
-      return rows.map((r) => ({
+
+      const subjects: GateSubject[] = rows.map((r) => ({
         sourceId: r.id,
+        kind: "doc_summary",
         title: r.title,
-        score: Number(r.score.toFixed(3)),
-        reason: r.reason,
+        // No full text here yet — the graph.relatedDocuments result is intentionally lightweight.
+        text: `${r.title} — ${r.reason}`,
         universeId,
         universeName: u.name,
+        hint: `reason=${r.reason}; score=${r.score.toFixed(3)}`,
+        meta: { reason: r.reason, score: Number(r.score.toFixed(3)) },
       }));
+
+      const compact = await gateAndCache("findRelatedDocs", subjects, subGoal, Math.min(topK, 6));
+      return {
+        goal: (subGoal && subGoal.trim()) || ctx.goalRef.current,
+        results: compact.map((c) => {
+          const m = (ctx.evidence.get(c.sourceId)?.meta ?? {}) as Record<string, unknown>;
+          return { ...c, reason: m.reason, score: m.score };
+        }),
+      };
     },
   });
 
@@ -303,7 +519,6 @@ export function createTools(ctx: ToolsContext) {
           props: e.props,
         };
       });
-      // Render a compact, directional narrative the agent can quote verbatim.
       const narrativeParts: string[] = [];
       let cursor = path.nodes[0];
       for (let i = 0; i < path.edges.length; i++) {
@@ -372,10 +587,11 @@ export function createTools(ctx: ToolsContext) {
 
   const graphNavigate = tool({
     description:
-      "Navigate the knowledge graph starting from a node id (document, entity, topic, domain, or chunk). Returns the semantic neighborhood (ABOUT, MENTIONS, RELATED, PART_OF, REFERENCES_DOC, SIMILAR_TO, IN_DOMAIN). Use `includeStructural: true` to also see CONTAINS/TAGGED, but expect heavy noise on large documents.",
+      "Inspect the semantic neighborhood of a node (document / entity / topic / domain / chunk). Excludes CONTAINS/TAGGED by default. Returns only the neighbors the relevance sub-LLM considers useful for the current goal. Use `navigate(nodeId, goal)` for goal-driven active navigation.",
     parameters: z.object({
       universeId: universeIdEnum,
       nodeId: z.string(),
+      subGoal: z.string().optional(),
       depth: z.number().int().min(1).max(3).default(1),
       includeStructural: z
         .boolean()
@@ -386,14 +602,84 @@ export function createTools(ctx: ToolsContext) {
         .optional()
         .describe("Optional explicit whitelist of edge relation labels. Overrides includeStructural."),
     }),
-    execute: async ({ universeId, nodeId, depth, includeStructural, onlyRelations }) => {
-      const u = uniById.get(universeId)!;
+    execute: async ({ universeId, nodeId, subGoal, depth, includeStructural, onlyRelations }) => {
+      const u = uniById.get(universeId);
+      if (!u) return { goal: ctx.goalRef.current, neighbors: [] };
       const filter = onlyRelations && onlyRelations.length
         ? { includeRels: onlyRelations }
         : includeStructural
           ? undefined
           : { excludeRels: ["CONTAINS", "TAGGED"] };
-      return await u.graph.neighborhood(nodeId, depth, filter);
+      const snap = await u.graph.neighborhood(nodeId, depth, filter);
+      const ownNodeId = nodeId;
+
+      // Group edges per neighbor id and pick the strongest signal.
+      const perNeighbor = new Map<string, { labels: string[]; direction: "out" | "in" | "both"; predicates: string[] }>();
+      for (const e of snap.edges) {
+        const other = e.source === ownNodeId ? e.target : e.target === ownNodeId ? e.source : null;
+        if (!other || other === ownNodeId) continue;
+        const entry = perNeighbor.get(other) ?? { labels: [], direction: "out" as const, predicates: [] };
+        entry.labels.push(e.label);
+        const predicate = typeof (e.properties as Record<string, unknown>)?.["predicate"] === "string"
+          ? String((e.properties as Record<string, unknown>)["predicate"])
+          : null;
+        if (predicate) entry.predicates.push(predicate);
+        const isOut = e.source === ownNodeId;
+        entry.direction = entry.direction === "both" ? "both" : isOut ? "out" : "in";
+        perNeighbor.set(other, entry);
+      }
+
+      const nodesById = new Map(snap.nodes.map((n) => [n.id, n]));
+      const subjects: GateSubject[] = [];
+      for (const [otherId, info] of perNeighbor.entries()) {
+        const n = nodesById.get(otherId);
+        if (!n) continue;
+        const dom = n.properties as Record<string, unknown>;
+        const desc =
+          typeof dom.summary === "string" ? String(dom.summary)
+          : typeof dom.description === "string" ? String(dom.description)
+          : typeof dom.text === "string" ? String(dom.text)
+          : "";
+        const label = n.label || otherId;
+        const edgeLabel = info.predicates.length ? info.predicates[0] : info.labels[0];
+        const hintParts = [
+          `type=${n.type}`,
+          `edge=${info.direction === "out" ? "->" : info.direction === "in" ? "<-" : "<->"}${edgeLabel}`,
+        ];
+        subjects.push({
+          sourceId: otherId,
+          kind: n.type,
+          title: label,
+          text: desc || label,
+          universeId,
+          universeName: u.name,
+          graphNodeId: otherId,
+          hint: hintParts.join(" | "),
+          meta: {
+            relations: Array.from(new Set(info.labels)),
+            predicates: Array.from(new Set(info.predicates)),
+            direction: info.direction,
+            nodeType: n.type,
+          },
+        });
+      }
+
+      const compact = await gateAndCache("graphNavigate", subjects, subGoal, 6);
+      return {
+        goal: (subGoal && subGoal.trim()) || ctx.goalRef.current,
+        fromNodeId: nodeId,
+        neighbors: compact.map((c) => {
+          const m = (ctx.evidence.get(c.sourceId)?.meta ?? {}) as Record<string, unknown>;
+          return {
+            ...c,
+            nodeType: m.nodeType,
+            relations: m.relations,
+            predicates: m.predicates,
+            direction: m.direction,
+          };
+        }),
+        note: "Only neighbors judged relevant to the goal are returned. Use graphNavigate again with a different subGoal or nodeId to walk further.",
+      };
     },
   });
 
@@ -402,7 +688,21 @@ export function createTools(ctx: ToolsContext) {
     parameters: z.object({ universeId: universeIdEnum, documentId: z.string() }),
     execute: async ({ universeId, documentId }) => {
       const u = uniById.get(universeId)!;
-      return await u.graph.getDocumentSummary(documentId);
+      const doc = await u.graph.getDocumentSummary(documentId);
+      if (doc) {
+        ctx.evidence.set(documentId, {
+          sourceId: documentId,
+          kind: "doc_summary",
+          title: doc.title,
+          text: doc.summary,
+          universeId,
+          universeName: u.name,
+          toolName: "getDocumentSummary",
+          capturedAt: Date.now(),
+          meta: { path: doc.path },
+        });
+      }
+      return doc;
     },
   });
 
@@ -411,31 +711,59 @@ export function createTools(ctx: ToolsContext) {
     parameters: z.object({ universeId: universeIdEnum, chunkId: z.string() }),
     execute: async ({ universeId, chunkId }) => {
       const u = uniById.get(universeId)!;
-      return await u.graph.getChunk(chunkId);
+      const chunk = await u.graph.getChunk(chunkId);
+      if (chunk) {
+        ctx.evidence.set(chunkId, {
+          sourceId: chunkId,
+          kind: "chunk",
+          title: chunk.documentTitle || `chunk #${chunk.position}`,
+          text: chunk.text,
+          universeId,
+          universeName: u.name,
+          toolName: "getChunk",
+          capturedAt: Date.now(),
+          meta: {
+            documentId: chunk.documentId,
+            position: chunk.position,
+            heading: chunk.heading,
+          },
+        });
+      }
+      return chunk;
     },
   });
 
   const sampleKnowledge = tool({
-    description: "Sample records from a universe. Useful for breadth discovery when the exact query is unclear.",
+    description: "Sample records from a universe. Results pass through the relevance sub-LLM. Useful for breadth discovery when no precise query is available.",
     parameters: z.object({
       universeId: universeIdEnum,
+      subGoal: z.string().optional(),
       kind: z.enum(["doc_summary", "chunk", "entity", "topic", "agent_note"]).default("doc_summary"),
       n: z.number().int().min(1).max(20).default(6),
       strategy: z.enum(["random", "recent", "diverse"]).default("diverse"),
     }),
-    execute: async ({ universeId, kind, n, strategy }) => {
+    execute: async ({ universeId, subGoal, kind, n, strategy }) => {
       const u = uniById.get(universeId)!;
       const rows = await u.vectors.sample(n, strategy, { kind });
       for (const hit of rows) ctx.recordSource({ ...hit, universeName: u.name });
-      return rows.map((r) => ({
-        id: r.id,
-        universeId: r.universe_id,
+
+      const subjects: GateSubject[] = rows.map((r) => ({
+        sourceId: r.source_id,
         kind: r.kind,
         title: r.title,
-        snippet: r.text.slice(0, 300),
-        sourceId: r.source_id,
+        text: r.text,
+        universeId: r.universe_id,
+        universeName: u.name,
         fileId: r.file_id,
+        graphNodeId: r.graph_node_id,
+        hint: r.domain ? `domain=${r.domain}` : undefined,
       }));
+
+      const compact = await gateAndCache("sampleKnowledge", subjects, subGoal, Math.min(n, 6));
+      return {
+        goal: (subGoal && subGoal.trim()) || ctx.goalRef.current,
+        results: compact,
+      };
     },
   });
 
@@ -451,6 +779,12 @@ export function createTools(ctx: ToolsContext) {
       const u = uniById.get(universeId)!;
       const passages: string[] = [];
       for (const sid of sourceIds) {
+        // Prefer the evidence cache to avoid an extra SQL round-trip.
+        const cached = ctx.evidence.get(sid);
+        if (cached?.text) {
+          passages.push(`[${sid}] ${cached.title}\n${cached.text}`);
+          continue;
+        }
         if (sid.startsWith("chunk:")) {
           const ch = await u.graph.getChunk(sid);
           if (ch) passages.push(`[${sid}]\n${ch.text}`);
@@ -468,6 +802,271 @@ export function createTools(ctx: ToolsContext) {
         temperature: 0.0,
       });
       return { answer: r.text, citations: sourceIds };
+    },
+  });
+
+  const inspect = tool({
+    description:
+      "Pull the full text of a previously retrieved source (chunk / document summary / entity / topic / agent_note) into your working context. Prefer this over re-running a search tool when you already know the sourceId.",
+    parameters: z.object({
+      sourceId: z.string(),
+      universeId: universeIdEnum.optional(),
+    }),
+    execute: async ({ sourceId, universeId }) => {
+      const cached = ctx.evidence.get(sourceId);
+      if (cached) {
+        return {
+          sourceId: cached.sourceId,
+          kind: cached.kind,
+          title: cached.title,
+          text: cached.text,
+          universeId: cached.universeId,
+          universeName: cached.universeName,
+          fromCache: true,
+          meta: cached.meta ?? {},
+        };
+      }
+      const bundles = universeId
+        ? [uniById.get(universeId)].filter(Boolean) as UniverseBundle[]
+        : ctx.universes;
+      for (const u of bundles) {
+        if (sourceId.startsWith("chunk:")) {
+          const c = await u.graph.getChunk(sourceId);
+          if (c) {
+            ctx.evidence.set(sourceId, {
+              sourceId,
+              kind: "chunk",
+              title: c.documentTitle || `chunk #${c.position}`,
+              text: c.text,
+              universeId: u.id,
+              universeName: u.name,
+              toolName: "inspect",
+              capturedAt: Date.now(),
+              meta: { documentId: c.documentId, position: c.position, heading: c.heading },
+            });
+            return {
+              sourceId,
+              kind: "chunk" as const,
+              title: c.documentTitle || `chunk #${c.position}`,
+              text: c.text,
+              universeId: u.id,
+              universeName: u.name,
+              fromCache: false,
+              meta: { documentId: c.documentId, position: c.position, heading: c.heading },
+            };
+          }
+        } else if (sourceId.startsWith("doc:")) {
+          const d = await u.graph.getDocumentSummary(sourceId);
+          if (d) {
+            ctx.evidence.set(sourceId, {
+              sourceId,
+              kind: "doc_summary",
+              title: d.title,
+              text: d.summary,
+              universeId: u.id,
+              universeName: u.name,
+              toolName: "inspect",
+              capturedAt: Date.now(),
+              meta: { path: d.path },
+            });
+            return {
+              sourceId,
+              kind: "doc_summary" as const,
+              title: d.title,
+              text: d.summary,
+              universeId: u.id,
+              universeName: u.name,
+              fromCache: false,
+              meta: { path: d.path },
+            };
+          }
+        }
+        const node = await u.graph.getNode(sourceId);
+        if (node) {
+          const props = node.props as Record<string, unknown>;
+          const title = (props.name as string) || (props.title as string) || (props.term as string) || sourceId;
+          const text =
+            (props.description as string) ||
+            (props.summary as string) ||
+            (props.text as string) ||
+            (props.content as string) ||
+            "";
+          const kind = node.type.toLowerCase();
+          ctx.evidence.set(sourceId, {
+            sourceId,
+            kind,
+            title,
+            text,
+            universeId: u.id,
+            universeName: u.name,
+            toolName: "inspect",
+            capturedAt: Date.now(),
+            meta: props,
+          });
+          return {
+            sourceId,
+            kind,
+            title,
+            text,
+            universeId: u.id,
+            universeName: u.name,
+            fromCache: false,
+            meta: props,
+          };
+        }
+      }
+      return { sourceId, error: "not_found", message: "No matching evidence or graph node." };
+    },
+  });
+
+  const quote = tool({
+    description:
+      "Extract the 1–3 most supporting sentences from a cached source (or fetch the source first). Keeps the main context lean by not dumping the full passage.",
+    parameters: z.object({
+      sourceId: z.string(),
+      question: z.string().describe("What should the quote support?"),
+      universeId: universeIdEnum.optional(),
+    }),
+    execute: async ({ sourceId, question, universeId }) => {
+      let record = ctx.evidence.get(sourceId);
+      if (!record) {
+        // Seed the cache via the same path inspect() uses.
+        const bundles = universeId
+          ? [uniById.get(universeId)].filter(Boolean) as UniverseBundle[]
+          : ctx.universes;
+        for (const u of bundles) {
+          if (sourceId.startsWith("chunk:")) {
+            const c = await u.graph.getChunk(sourceId);
+            if (c) {
+              record = {
+                sourceId,
+                kind: "chunk",
+                title: c.documentTitle || `chunk #${c.position}`,
+                text: c.text,
+                universeId: u.id,
+                universeName: u.name,
+                toolName: "quote",
+                capturedAt: Date.now(),
+                meta: { documentId: c.documentId, position: c.position },
+              };
+              ctx.evidence.set(sourceId, record);
+              break;
+            }
+          } else if (sourceId.startsWith("doc:")) {
+            const d = await u.graph.getDocumentSummary(sourceId);
+            if (d) {
+              record = {
+                sourceId,
+                kind: "doc_summary",
+                title: d.title,
+                text: d.summary,
+                universeId: u.id,
+                universeName: u.name,
+                toolName: "quote",
+                capturedAt: Date.now(),
+              };
+              ctx.evidence.set(sourceId, record);
+              break;
+            }
+          }
+        }
+      }
+      if (!record || !record.text) {
+        return { sourceId, error: "not_found", quote: "" };
+      }
+      const r = await generateText({
+        model: ctx.llm.chatModel,
+        system:
+          "You extract verbatim supporting quotes from a single passage. Return only 1–3 consecutive sentences copied exactly from the passage. If nothing supports the question, return an empty string.",
+        prompt: `Question: ${question}\n\nPassage [${sourceId}]:\n${record.text}\n\nSupporting quote:`,
+        temperature: 0,
+        maxTokens: 300,
+      });
+      return {
+        sourceId,
+        universeId: record.universeId,
+        title: record.title,
+        kind: record.kind,
+        quote: r.text.trim(),
+      };
+    },
+  });
+
+  const navigate = tool({
+    description:
+      "Active graph navigation: pick the single best next hop from a node toward a goal. Inspects the neighborhood (semantic edges only), runs the relevance sub-LLM against the goal, and returns the 3 most promising next nodes with reasons. Use iteratively to walk the graph one hop at a time.",
+    parameters: z.object({
+      universeId: universeIdEnum,
+      nodeId: z.string(),
+      goal: z.string().describe("What are you navigating toward? E.g. 'find companies founded by Marie Curie'."),
+      depth: z.number().int().min(1).max(2).default(1),
+    }),
+    execute: async ({ universeId, nodeId, goal, depth }) => {
+      const u = uniById.get(universeId);
+      if (!u) return { goal, from: nodeId, candidates: [] };
+      const snap = await u.graph.neighborhood(nodeId, depth, { excludeRels: ["CONTAINS", "TAGGED"] });
+
+      const perNeighbor = new Map<string, { labels: string[]; predicates: string[]; direction: "out" | "in" | "both" }>();
+      for (const e of snap.edges) {
+        const other = e.source === nodeId ? e.target : e.target === nodeId ? e.source : null;
+        if (!other || other === nodeId) continue;
+        const entry = perNeighbor.get(other) ?? { labels: [], predicates: [], direction: "out" as const };
+        entry.labels.push(e.label);
+        const pred = typeof (e.properties as Record<string, unknown>)?.["predicate"] === "string"
+          ? String((e.properties as Record<string, unknown>)["predicate"])
+          : null;
+        if (pred) entry.predicates.push(pred);
+        const isOut = e.source === nodeId;
+        entry.direction = entry.direction === "both" ? "both" : isOut ? "out" : "in";
+        perNeighbor.set(other, entry);
+      }
+
+      const nodesById = new Map(snap.nodes.map((n) => [n.id, n]));
+      const subjects: GateSubject[] = [];
+      for (const [otherId, info] of perNeighbor.entries()) {
+        const n = nodesById.get(otherId);
+        if (!n) continue;
+        const dom = n.properties as Record<string, unknown>;
+        const desc =
+          typeof dom.summary === "string" ? String(dom.summary)
+          : typeof dom.description === "string" ? String(dom.description)
+          : typeof dom.text === "string" ? String(dom.text)
+          : "";
+        const edgeLabel = info.predicates.length ? info.predicates[0] : info.labels[0];
+        subjects.push({
+          sourceId: otherId,
+          kind: n.type,
+          title: n.label || otherId,
+          text: desc || n.label || otherId,
+          universeId,
+          universeName: u.name,
+          graphNodeId: otherId,
+          hint: `type=${n.type} | edge=${info.direction === "out" ? "->" : info.direction === "in" ? "<-" : "<->"}${edgeLabel}`,
+          meta: {
+            relations: Array.from(new Set(info.labels)),
+            predicates: Array.from(new Set(info.predicates)),
+            direction: info.direction,
+            nodeType: n.type,
+          },
+        });
+      }
+
+      // Explicit goal override — `navigate` is goal-driven by design.
+      const compact = await gateAndCache("navigate", subjects, goal, 3);
+      const candidates = compact.map((c) => {
+        const m = (ctx.evidence.get(c.sourceId)?.meta ?? {}) as Record<string, unknown>;
+        return {
+          nextNodeId: c.sourceId,
+          nodeType: m.nodeType,
+          title: c.title,
+          relevance: c.relevance,
+          why: c.why,
+          relations: m.relations,
+          predicates: m.predicates,
+          direction: m.direction,
+        };
+      });
+      return { goal, from: nodeId, candidates };
     },
   });
 
@@ -514,6 +1113,9 @@ export function createTools(ctx: ToolsContext) {
     getChunk,
     sampleKnowledge,
     summarizeSubthread,
+    inspect,
+    quote,
+    navigate,
     saveAgentNote,
     recallAgentMemory,
   };
@@ -574,8 +1176,6 @@ async function expandViaGraphNeighborhood(
 
   for (const seed of topSeeds) {
     if (!seed.graph_node_id) continue;
-    // Expansion ignores trivial structural edges so the neighborhood is
-    // dominated by meaningful connections (MENTIONS, RELATED, PART_OF, etc.).
     const snap = await bundle.graph.neighborhood(seed.graph_node_id, depth, { excludeRels: ["TAGGED"] });
     for (const e of snap.edges) {
       const otherId = e.source === seed.graph_node_id ? e.target : e.source;
@@ -587,9 +1187,6 @@ async function expandViaGraphNeighborhood(
       const thisW = RELATION_WEIGHTS[e.label] ?? 0.3;
       if (thisW > prevW) bestRelationFor.set(otherId, e.label);
 
-      // Additional signal: MENTIONS.count and explicit edge.weight flow into
-      // a per-neighbour multiplier (capped so one super-frequent entity
-      // cannot dominate the rank).
       const propCount = Number((e.properties as Record<string, unknown> | undefined)?.["count"] ?? 0);
       const propWeight = Number((e.properties as Record<string, unknown> | undefined)?.["weight"] ?? 0);
       const edgeSignal = Math.min(2.0, 1 + Math.log1p(propCount) * 0.3 + propWeight * 0.3);
