@@ -123,7 +123,10 @@ Every heavy tool accepts an optional \`subGoal\` argument — use it to tell the
 - After \`vectorSearch\` returns seeds, ALWAYS continue into the graph (phase 3) before answering, unless the vector hits alone already contain the exact, citable evidence and the question is strictly about a single passage.
 - NEVER restate full tool results in your reasoning. Reference them only by sourceId and only inspect/quote them when the compact reason is insufficient.
 - Do NOT call the same tool with the exact same arguments (including \`subGoal\`) more than twice. The loop guard will reply with \`{ error: "loop_detected" }\`; when you see that, STOP retrying that call — switch to a different tool, vary the query / topK / kinds / universe, or synthesize the final answer from what you already have.
+- Do NOT paraphrase \`subGoal\` / \`query\` / \`topK\` merely to keep calling the same tool. Each tool has a strict per-turn budget (roughly: \`vectorSearch\` ≤ 6, \`entitySearch\` / \`findEntityMentions\` / \`findRelatedDocs\` / \`graphNavigate\` ≤ 4, \`navigate\` ≤ 6, \`quote\` / \`inspect\` ≤ 10). Over the limit the tool returns \`{ error: "per_tool_budget_exceeded" }\` — when you see that, STOP retrying that tool and either switch tool or answer now.
+- The whole turn has a soft total-call budget of ~${SOFT_TOTAL_BUDGET} tool calls. Past that, heavy retrieval tools return \`{ error: "soft_total_budget_exceeded" }\` and only \`quote\` / \`inspect\` / \`summarizeSubthread\` / \`saveAgentNote\` remain usable. When you see that error, produce the final grounded answer immediately — do NOT keep exploring.
 - If a tool returns \`{ error: "tool_timeout" }\`, try ONCE more with a narrower query or fewer results; otherwise pivot to a different tool or answer with the evidence collected so far.
+- As soon as you have citable evidence for every claim you intend to make, STOP retrieving and write the final answer. A good answer with 3 solid citations is infinitely better than 20 tool calls without one.
 - Prefer summaries first; drill into chunks only when the summary does not answer the question.
 - Save notable insights with saveAgentNote when they will matter for future turns.
 
@@ -138,6 +141,62 @@ Every heavy tool accepts an optional \`subGoal\` argument — use it to tell the
 - Finish with a "Sources" section listing every cited id. Be concise, structured, and use markdown (lists, headings, tables, code blocks).`;
 
 const LOOP_LIMIT = 3;
+
+/**
+ * Per-tool call-count budget for a single agent turn. Independent of arguments
+ * — this is the coarse guard that prevents the model from paraphrasing the
+ * `subGoal` or nudging `topK` / `query` just enough to bypass the exact-args
+ * loop detector and hammer the same tool twenty times in a row (observed in
+ * production: 17 × vectorSearch on the same document with slightly different
+ * `subGoal` each call, never producing a final answer).
+ *
+ * Numbers are deliberately generous: well-behaved chains rarely approach
+ * them, but truly abusive repetition hits the wall and receives a structured
+ * "stop exploring, synthesize now" error that the model can act on.
+ */
+const PER_TOOL_LIMITS: Record<string, number> = {
+  vectorSearch: 6,
+  entitySearch: 4,
+  findEntityMentions: 4,
+  findRelatedDocs: 4,
+  graphNavigate: 4,
+  navigate: 6,
+  sampleKnowledge: 2,
+  findPath: 3,
+  quote: 10,
+  inspect: 10,
+  summarizeSubthread: 3,
+  getDocumentSummary: 6,
+  getChunk: 10,
+  listTopics: 2,
+  listDomains: 2,
+  listEntities: 2,
+  topicHierarchy: 2,
+};
+const DEFAULT_PER_TOOL_LIMIT = 6;
+
+/**
+ * Soft limit on the total number of tool calls in a single turn. Once crossed
+ * we stop accepting further HEAVY retrieval calls and ask the model to
+ * synthesize from what it already has. Drill tools (`quote`, `inspect`) and
+ * memory writes (`saveAgentNote`) are still allowed so the model can pull in
+ * citations for the final answer.
+ */
+const SOFT_TOTAL_BUDGET = 18;
+const HEAVY_TOOLS = new Set([
+  "vectorSearch",
+  "entitySearch",
+  "findEntityMentions",
+  "findRelatedDocs",
+  "graphNavigate",
+  "navigate",
+  "sampleKnowledge",
+  "findPath",
+  "listTopics",
+  "listDomains",
+  "listEntities",
+  "topicHierarchy",
+]);
 
 /**
  * Extract a compact goal string from the conversation history. We prefer the
@@ -213,10 +272,14 @@ export async function runAgent(input: AgentInput): Promise<void> {
 
   const baseTools = createTools(toolCtx);
   const callFingerprints = new Map<string, number>();
+  const perToolCounts = new Map<string, number>();
+  const totalCounter = { total: 0 };
   const tools = wrapTools(baseTools, {
     toolTimeoutMs: budget.toolTimeoutMs,
     loopDetection: budget.loopDetection,
     callFingerprints,
+    perToolCounts,
+    totalCounter,
   });
 
   const invocationsById = new Map<string, { startedAt: number }>();
@@ -279,38 +342,86 @@ export async function runAgent(input: AgentInput): Promise<void> {
   }
 }
 
-interface WrapOptions {
+/**
+ * Options accepted by `wrapTools`. Exported for unit tests that want to
+ * exercise the safety shell without spinning up a real LLM / streamText loop.
+ */
+export interface WrapOptions {
   toolTimeoutMs: number;
   loopDetection: boolean;
   callFingerprints: Map<string, number>;
+  /** Per-tool call count for this turn. Independent of args. */
+  perToolCounts: Map<string, number>;
+  /** Shared counter for the total number of tool calls this turn. */
+  totalCounter: { total: number };
 }
+
+export const __internals = {
+  PER_TOOL_LIMITS,
+  DEFAULT_PER_TOOL_LIMIT,
+  SOFT_TOTAL_BUDGET,
+  HEAVY_TOOLS,
+  LOOP_LIMIT,
+} as const;
 
 /**
  * Wrap every tool in a safety shell:
- *   1. Loop detection (return a structured error after N identical calls with
- *      identical args, so the outer LLM can correct course or synthesize an
- *      answer from what it already has). We intentionally do NOT abort the
- *      whole stream here — aborting the controller was the root cause of the
- *      agent occasionally ending a turn with an empty assistant message when
- *      the model retried a slow tool a few times in a row.
- *      `subGoal` is included in the fingerprint so a genuinely refined
- *      relevance-gate goal on an otherwise identical call does not trip the
- *      guard.
- *   2. Per-tool timeout that resolves with a structured error instead of
- *      hanging. The outer AbortSignal (user-driven stop) still cancels.
+ *   1. **Per-tool budget** (coarse). Each tool has a hard cap per turn
+ *      (`PER_TOOL_LIMITS`) that is independent of arguments. This stops the
+ *      model from paraphrasing `subGoal` / `query` / `topK` to bypass the
+ *      fingerprint loop guard and call the same tool 15+ times.
+ *   2. **Soft total budget.** After `SOFT_TOTAL_BUDGET` tool calls we start
+ *      rejecting further HEAVY exploration calls with a "synthesize now"
+ *      error. Drill tools (`quote`, `inspect`, `summarizeSubthread`) and
+ *      `saveAgentNote` are still allowed so the model can finish citations.
+ *   3. **Loop detection (fingerprint).** Identical calls with identical args
+ *      beyond `LOOP_LIMIT` return a structured error. `subGoal` is part of
+ *      the fingerprint so a genuine goal refinement does not trip the guard.
+ *      The outer stream is **not** aborted — aborting was the root cause of
+ *      empty assistant messages when the model retried a slow tool a few
+ *      times in a row.
+ *   4. **Per-tool timeout** via `raceWithTimeout`, so a hung provider call
+ *      resolves with a structured error instead of blocking the agent loop.
  * The wrapper keeps Zod parameter schemas intact so the AI SDK still validates.
  */
-function wrapTools<T extends Record<string, Tool>>(
+export function wrapTools<T extends Record<string, Tool>>(
   base: T,
   opts: WrapOptions,
 ): Record<string, Tool> {
   const wrapped: Record<string, Tool> = {};
   for (const [name, t] of Object.entries(base)) {
+    const perToolLimit = PER_TOOL_LIMITS[name] ?? DEFAULT_PER_TOOL_LIMIT;
     wrapped[name] = {
       ...t,
       execute: async (args: unknown, ctx: { toolCallId?: string; messages?: unknown; abortSignal?: AbortSignal }) => {
-        const fingerprint = `${name}:${stableStringify(args)}`;
+        const toolCount = (opts.perToolCounts.get(name) ?? 0) + 1;
+        opts.perToolCounts.set(name, toolCount);
+        opts.totalCounter.total += 1;
+
+        if (toolCount > perToolLimit) {
+          log.warn("agent.per_tool_budget_exceeded", { tool: name, count: toolCount, limit: perToolLimit });
+          return {
+            error: "per_tool_budget_exceeded",
+            message:
+              `You have already called "${name}" ${toolCount - 1} times this turn (limit ${perToolLimit}). Stop repeating this tool — switch to a different tool or, if you already have enough evidence, produce the final answer now with inline [^source:<id>] citations. Do NOT retry this call.`,
+          };
+        }
+
+        if (opts.totalCounter.total > SOFT_TOTAL_BUDGET && HEAVY_TOOLS.has(name)) {
+          log.warn("agent.soft_total_budget_exceeded", {
+            tool: name,
+            total: opts.totalCounter.total,
+            softLimit: SOFT_TOTAL_BUDGET,
+          });
+          return {
+            error: "soft_total_budget_exceeded",
+            message:
+              `You have already made ${opts.totalCounter.total - 1} tool calls this turn (soft limit ${SOFT_TOTAL_BUDGET}). Further heavy retrieval is disabled for this turn. Synthesize the final answer NOW from the evidence already gathered, using "quote" or "inspect" only if you are missing an exact citation.`,
+          };
+        }
+
         if (opts.loopDetection) {
+          const fingerprint = `${name}:${stableStringify(args)}`;
           const count = (opts.callFingerprints.get(fingerprint) ?? 0) + 1;
           opts.callFingerprints.set(fingerprint, count);
           if (count > LOOP_LIMIT) {
@@ -322,6 +433,7 @@ function wrapTools<T extends Record<string, Tool>>(
             };
           }
         }
+
         const inner = (t.execute as (a: unknown, c: unknown) => Promise<unknown>)(args, ctx);
         if (!opts.toolTimeoutMs) return inner;
         return await raceWithTimeout(name, inner, opts.toolTimeoutMs, ctx.abortSignal);
