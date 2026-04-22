@@ -50,7 +50,14 @@ export interface GateOutput {
 }
 
 const DEFAULT_MAX_KEEP = 6;
-const DEFAULT_TIMEOUT_MS = 12_000;
+/**
+ * Hard budget for the sub-LLM gate call. Kept well below the outer tool
+ * timeout (default 30s) so that slow gates never cause the surrounding heavy
+ * tool (vectorSearch / entitySearch / ...) to hit its own timeout — otherwise
+ * the main model sees `tool_timeout`, retries the same call, and eventually
+ * trips the loop guard. The structured and prose passes each get this budget.
+ */
+const DEFAULT_TIMEOUT_MS = 6_000;
 /** If there are this many (or fewer) candidates we skip the sub-LLM entirely. */
 const TRIVIAL_ITEMS_THRESHOLD = 2;
 

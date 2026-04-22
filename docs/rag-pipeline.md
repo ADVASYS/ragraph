@@ -76,8 +76,8 @@ The system prompt (see `Agent.ts`) contains:
 
 Every tool is wrapped in `Agent.wrapTools`:
 
-1. **Loop detection.** A stable fingerprint (`tool:${stableStringify(argsWithoutSubGoal)}`) is counted; identical calls beyond `LOOP_LIMIT` (default `3`) return a structured `{ error: "loop_detected", message }` and abort the turn via a shared `AbortController`. The `subGoal` field is stripped from the fingerprint so refinement of the relevance gate does not count as a loop.
-2. **Per-tool timeout.** The tool promise is raced against a `setTimeout` of `budget.toolTimeoutMs`. On timeout the tool resolves with `{ error: "tool_timeout", message }` instead of hanging the agent loop.
+1. **Loop detection.** A stable fingerprint (`tool:${stableStringify(args)}`, including `subGoal`) is counted; identical calls beyond `LOOP_LIMIT` (default `3`) return a structured `{ error: "loop_detected", message }` to the model. The outer stream is **not** aborted — the model sees the error and is expected to either vary its arguments, switch tools, or produce the final answer with what it already has. Including `subGoal` in the fingerprint means a genuinely sharpened relevance-gate goal on an otherwise identical call does not trip the guard.
+2. **Per-tool timeout.** The tool promise is raced against a `setTimeout` of `budget.toolTimeoutMs`. On timeout the tool resolves with `{ error: "tool_timeout", message }` instead of hanging the agent loop. The relevance-gate sub-LLM has its own, much smaller internal budget (`DEFAULT_TIMEOUT_MS = 6s`) so a slow gate can never consume the outer tool budget.
 3. **Abort propagation.** An external `AbortSignal` (e.g. user clicks "stop generating") aborts the controller; the SDK unwinds the stream cleanly and the agent still emits a final `onFinish` with the sources it has collected so far.
 
 ## Source tracking
@@ -105,6 +105,6 @@ All values live in `AppSettings.agent` and are editable in Settings → Agent:
 | `maxSteps` | `12` | Maximum reasoning/tool steps per turn. |
 | `toolTimeoutMs` | `30000` | Per-tool timeout (0 disables). |
 | `maxSources` | `40` | Upper bound on the citation list for the final message. |
-| `loopDetection` | `true` | Abort on repeated identical tool calls. |
+| `loopDetection` | `true` | Return `{ error: "loop_detected" }` on repeated identical tool calls so the model can self-correct. |
 
 Lower `maxSteps` for faster, cheaper answers; raise it for deep research. Disable `loopDetection` only when investigating an agent regression — it is almost always a symptom of a poor system prompt or a flaky tool.

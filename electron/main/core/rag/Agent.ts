@@ -79,7 +79,8 @@ Use \`navigate(nodeId, goal)\` to walk the graph one hop at a time. It returns a
 
 - NEVER fabricate facts. Every non-trivial claim must be grounded in a retrieved source.
 - NEVER restate full tool results in your reasoning. Reference them only by sourceId and only inspect/quote them when the compact reason is insufficient.
-- Do NOT call the same tool with the same (non-subGoal) arguments more than twice — the loop detector will abort the turn. Vary the query, kinds, or universe when retrying.
+- Do NOT call the same tool with the exact same arguments (including \`subGoal\`) more than twice. The loop guard will reply with \`{ error: "loop_detected" }\`; when you see that, STOP retrying that call — switch to a different tool, vary the query / topK / kinds / universe, or synthesize the final answer from what you already have.
+- If a tool returns \`{ error: "tool_timeout" }\`, try ONCE more with a narrower query or fewer results; otherwise pivot to a different tool or answer with the evidence collected so far.
 - Prefer summaries first; drill into chunks only when the summary does not answer the question.
 - Save notable insights with saveAgentNote when they will matter for future turns.
 
@@ -173,7 +174,6 @@ export async function runAgent(input: AgentInput): Promise<void> {
     toolTimeoutMs: budget.toolTimeoutMs,
     loopDetection: budget.loopDetection,
     callFingerprints,
-    abort: () => controller.abort(),
   });
 
   const invocationsById = new Map<string, { startedAt: number }>();
@@ -240,15 +240,21 @@ interface WrapOptions {
   toolTimeoutMs: number;
   loopDetection: boolean;
   callFingerprints: Map<string, number>;
-  abort: () => void;
 }
 
 /**
  * Wrap every tool in a safety shell:
- *   1. Loop detection (abort after N identical calls with identical args).
- *      The `subGoal` field is stripped from the fingerprint so the agent can
- *      retry the same query with a sharper goal without tripping the guard.
- *   2. Per-tool timeout that resolves with a structured error instead of hanging.
+ *   1. Loop detection (return a structured error after N identical calls with
+ *      identical args, so the outer LLM can correct course or synthesize an
+ *      answer from what it already has). We intentionally do NOT abort the
+ *      whole stream here — aborting the controller was the root cause of the
+ *      agent occasionally ending a turn with an empty assistant message when
+ *      the model retried a slow tool a few times in a row.
+ *      `subGoal` is included in the fingerprint so a genuinely refined
+ *      relevance-gate goal on an otherwise identical call does not trip the
+ *      guard.
+ *   2. Per-tool timeout that resolves with a structured error instead of
+ *      hanging. The outer AbortSignal (user-driven stop) still cancels.
  * The wrapper keeps Zod parameter schemas intact so the AI SDK still validates.
  */
 function wrapTools<T extends Record<string, Tool>>(
@@ -260,18 +266,16 @@ function wrapTools<T extends Record<string, Tool>>(
     wrapped[name] = {
       ...t,
       execute: async (args: unknown, ctx: { toolCallId?: string; messages?: unknown; abortSignal?: AbortSignal }) => {
-        const fingerprintArgs = stripSubGoal(args);
-        const fingerprint = `${name}:${stableStringify(fingerprintArgs)}`;
+        const fingerprint = `${name}:${stableStringify(args)}`;
         if (opts.loopDetection) {
           const count = (opts.callFingerprints.get(fingerprint) ?? 0) + 1;
           opts.callFingerprints.set(fingerprint, count);
           if (count > LOOP_LIMIT) {
             log.warn("agent.loop_detected", { tool: name, count });
-            opts.abort();
             return {
               error: "loop_detected",
               message:
-                "This tool has already been called with identical arguments. Stop repeating and either vary the query or answer with what you already have.",
+                "This tool has already been called with identical arguments. Stop repeating: either vary the query / topK / kinds / universeId, switch to a different tool, or produce the final answer from what you already have.",
             };
           }
         }
@@ -282,14 +286,6 @@ function wrapTools<T extends Record<string, Tool>>(
     } as Tool;
   }
   return wrapped;
-}
-
-/** Remove the `subGoal` key from a tool-args object so loop detection only compares the structural arguments. */
-function stripSubGoal(args: unknown): unknown {
-  if (!args || typeof args !== "object") return args;
-  const copy: Record<string, unknown> = { ...(args as Record<string, unknown>) };
-  delete copy["subGoal"];
-  return copy;
 }
 
 async function raceWithTimeout<T>(tool: string, p: Promise<T>, ms: number, signal?: AbortSignal): Promise<T | { error: string; message: string }> {
