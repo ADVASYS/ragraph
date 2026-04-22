@@ -67,9 +67,14 @@ The system prompt (see `Agent.ts`) contains:
 - The active universe list (id + name).
 - A concise graph-schema reminder (node types, edge types).
 - The **language directive**: the agent answers in the user's language unless the user writes in another language.
-- The **scan → filter → drill → synthesize** loop that mandates compact refs first, `inspect` / `quote` / `summarizeSubthread` for drilling, and active navigation via `navigate`.
-- A **tool-selection rubric** with concrete example chains (e.g. "`Marie Curie`" → `entitySearch` → `navigate` → `findEntityMentions`).
-- **Hard rules**: no fabrication, no identical tool calls (loop detection), never restate full tool results, prefer summaries first, save notable insights, and the exact citation format (`[^source:<id>]`).
+- A **mandatory five-phase retrieval workflow** that every non-chit-chat turn must follow in order:
+  1. **Formulate a retrieval query** internally (no tool call) — strip filler, keep proper nouns and the relation that needs grounding.
+  2. **Vector search FIRST** — the first tool call of the turn MUST be `vectorSearch(query, subGoal)`, usually with `topK=8` and `expandViaGraph=true`. Narrow via `kinds` when appropriate (`["doc_summary"]` for landscape, `["chunk"]` for passage evidence).
+  3. **Graph expansion** — take the seed ids from phase 2 and walk the graph via `entitySearch` / `navigate` / `findPath` / `findRelatedDocs` / `findEntityMentions` / `graphNavigate` until every intended claim has at least one concrete `sourceId`. An unfamiliar universe may start with `listDomains` / `listTopics` / `topicHierarchy`, but phase 2 is still required before any graph walk.
+  4. **Drill for exact text** — `inspect`, `quote` or `summarizeSubthread` to load the verbatim evidence for each citation.
+  5. **Synthesize** — markdown answer with inline `[^source:<id>]` citations.
+- Worked example chains for all three canonical question shapes (entity lookup, relation between two entities, topic overview), each explicitly split into phases 1→5.
+- **Hard rules**: no fabrication; `vectorSearch` first (graph-only tools are forbidden as the FIRST tool of a turn); always continue into the graph after `vectorSearch` unless a single-passage answer is already grounded; no identical tool calls (loop guard returns `{ error: "loop_detected" }` without aborting the stream); never restate full tool results; prefer summaries first; save notable insights; exact citation format (`[^source:<id>]`).
 - Preference order for citation ids: `chunk:<fileId>:<idx>` > `ent:<type>:<slug>` > `doc:<fileId>`.
 
 ## Safety shell
